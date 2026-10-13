@@ -55,17 +55,21 @@ In Swagger, use `GET /v1/products`, copy a product ID into `GET /v1/products/{id
 
 Trigger `dom` or `javascript` through the same endpoint. Price changes, availability changes, transient errors, and unchanged reruns are exercised with in-process fixture helpers in tests and recorded operator workflows; there is no public fixture-mutation endpoint.
 
-For normal startup, use `docker compose up --build -d --wait` as above. To stop and bring the stack back up while preserving PostgreSQL data, use:
+For normal startup, use `docker compose up --build -d --wait` as above. For a supported full-stack restart while preserving PostgreSQL data, use:
 
 ```sh
-docker compose stop
-docker compose up -d --wait
-docker compose ps -a
+./scripts/stack-restart.sh
 ```
 
-Avoid a whole-stack `docker compose restart`: it also restarts the one-shot `migrate` service. During the owner-reported final smoke test, that service exited with code 1 and `Error: getaddrinfo EAI_AGAIN postgres`, indicating a transient failure to resolve the PostgreSQL service name during restart. All long-running services eventually became healthy, but that did not mean the migration run had succeeded. The precise cause of the DNS timing failure has not been established.
+The script resolves the repository directory even when called by absolute path from another directory. It validates Compose configuration, runs `docker compose stop` followed by `docker compose up -d --wait`, then independently checks that `migrate` exited 0 and every configured long-running service is running and healthy. Exit 0 means those checks passed; any prerequisite, command, or state failure exits 1. Node.js and Docker/Compose are required. For code/image upgrades, stop the stack before running `docker compose up --build -d --wait`; the script does not request an image rebuild.
 
-Recovery in that test succeeded with `docker compose up -d --wait`: `migrate` exited with code 0 and all long-running services remained healthy. Check `docker compose ps -a` for both outcomes. Compose's startup dependencies require PostgreSQL health before migrations and successful migration completion before API/worker startup. This is the recommended startup/recovery path; the observed recovery is **not a permanent fix** for whole-stack restart behavior. The earlier tested `stop` / `start --wait` sequence remains historical evidence, not evidence that `restart` is safe. See the [restart smoke-test addendum](docs/manual-testing.md#owner-reported-final-smoke-test-whole-stack-restart).
+The zero-argument default explicitly targets project `web-data-ingestion-engine` using only the repository’s `compose.yaml`; automatic override-file discovery is disabled. The script prints the effective project and canonical Compose file paths before stopping anything. Explicit selection of a different project or file list requires exactly `INGESTION_STACK_ALLOW_ALTERNATE_TARGET=1`. This non-interactive acknowledgment permits stopping the selected stack; it does not prove that its data is disposable or that its configuration is safe. Keep it scoped to a single invocation rather than exporting it globally.
+
+For an isolated target, set `COMPOSE_PROJECT_NAME`, optionally `COMPOSE_FILE` (colon-separated, distinct readable absolute YAML file paths), and `INGESTION_STACK_ALLOW_ALTERNATE_TARGET=1` for that invocation. Empty/invalid names, relative/missing/duplicate files, other `COMPOSE_*` environment controls, and Compose settings in `.env` are rejected before mutation. The script pins the selected identity/files with explicit CLI flags and checks the resolved project name. Operators remain responsible for the Docker context and trusted file contents. Before stopping services, preflight requires mandatory startup gates: `migrate` waits for healthy `postgres`; `api` and `worker` wait for successful `migrate`; `worker` also waits for healthy `fixture-server` and `browser`. Missing gates, weaker conditions, and optional dependencies are rejected, including for acknowledged alternate files. V1 expects one container per service, `migrate` as the one-shot service, and health checks on all other services; profiled services are unsupported. The workflow causes downtime and does not retry migrations or delete volumes.
+
+Native whole-stack `docker compose restart` is unsupported: it reruns the one-shot migrator without this configuration's startup gates in Compose 5.5.1. The owner's smoke test produced `getaddrinfo EAI_AGAIN postgres`, then recovered with `up -d --wait`. The DNS timing cause and native restart behavior remain **unfixed**. The script implements the safer operational alternative; see [final isolated lifecycle testing](docs/manual-testing.md#final-guarded-lifecycle-runtime-validation--13-october-2026) and [owner smoke testing](docs/manual-testing.md#owner-performed-supported-workflow-smoke-test--13-october-2026).
+
+On failure, the stack may be stopped or partially started. Inspect `docker compose ps -a` and `docker compose logs migrate` with the same project/file settings, correct the cause, then rerun the script. It suppresses raw command output to avoid exposing credentials; diagnostics identify failed phases or container states. Service health alone is not evidence of migration success. Do not delete the PostgreSQL volume to recover.
 
 `docker compose down` removes the stack but retains its named database volume. To discard disposable application data:
 
@@ -119,6 +123,7 @@ tests/                    Unit, PostgreSQL/API integration, browser fixtures/tes
 docker/                   Browser sandbox/server and PostgreSQL bootstrap
 docs/                     Architecture, policy, and stage evidence
 .github/workflows/         CI definition
+scripts/                  Supported operator lifecycle workflow
 ```
 
 See [architecture](docs/architecture.md) for data flow and design decisions.
@@ -198,9 +203,9 @@ Integration tests require a dedicated disposable database whose name ends in `_t
 
 The automated demonstration covers initial ingestion, unchanged rerun, price changes, availability changes, return to an earlier state, transient retry, replay, page resumption, and browser fallback. Fixture state mutation exists only as an in-process test helper; there is no HTTP mutation endpoint.
 
-The validated suite contains **65 tests: 33 unit, 22 PostgreSQL/API integration, and 10 Playwright/browser**. Unit tests cover normalization, extraction, configuration, and URL policy. Integration tests use real PostgreSQL and Fastify, covering persistence/history, jobs, API behavior, retry/replay, and security/resource bounds. Browser tests exercise controlled rendering and browser-specific restrictions.
+The suite contains **152 tests: 120 unit, 22 PostgreSQL/API integration, and 10 Playwright/browser**. Unit tests cover normalization, extraction, configuration, URL policy, and mocked operator-workflow success/failure handling without mutating Docker state. Integration tests use real PostgreSQL and Fastify, covering persistence/history, jobs, API behavior, retry/replay, and security/resource bounds. Browser tests exercise controlled rendering and browser-specific restrictions. The final guarded lifecycle workflow was exercised in disposable Compose with repeated restarts, persistence comparisons, preflight refusals, migration failure injection, and recovery. The owner subsequently reported a successful restart of the original local stack; that smoke test had no pre-restart data baseline. Earlier application integration/browser results remain recorded in the validation report.
 
-Local validation also exercised clean Compose startup, real HTTP ingestion, history changes/deduplication, retries, authorization, pagination, and restart persistence. GitHub Actions has been reviewed statically; **no GitHub-hosted run is claimed**. Counts and discovered/fixed defects are recorded in [manual testing](docs/manual-testing.md), [security review](docs/security-review.md), and [final validation](docs/validation.md), with each report preserving its stage-specific evidence.
+Local validation also exercised clean Compose startup, real HTTP ingestion, history changes/deduplication, retries, authorization, pagination, and restart persistence. The owner verified that GitHub-hosted `Development checks` run [38427214001](https://github.com/Warw0lfLabs/web-data-ingestion-engine/actions/runs/38427214001) succeeded on October 13, 2026; this predates the pending lifecycle changes and does not validate them. Counts and discovered/fixed defects are recorded in [manual testing](docs/manual-testing.md), [security review](docs/security-review.md), and [final validation](docs/validation.md), with each report preserving its stage-specific evidence.
 
 ## V1 limits
 
@@ -208,4 +213,4 @@ One worker instance runs at most two jobs concurrently, with one active run per 
 
 Normalization supports USD/EUR/GBP, dot-decimal exact prices, and explicit availability mappings. Missing listings do not imply out of stock; stale current offers retain their last-observed timestamps. Broad locale handling, interactive variant selection, cross-source matching, retention jobs, and user accounts are deferred.
 
-API rate limits are single-process. Production ingress/TLS/deployment and remote GitHub CI have not been validated. A local pg warning about queued queries remains with installed pg 8 operation passing; future pg 9 compatibility is unverified. No frontend, Redis, ORM, arbitrary crawling, or bypass/evasion mechanisms are included.
+API rate limits are single-process. Production ingress/TLS/deployment has not been validated; no hosted CI run for the pending lifecycle changes is recorded. A local pg warning about queued queries remains with installed pg 8 operation passing; future pg 9 compatibility is unverified. No frontend, Redis, ORM, arbitrary crawling, or bypass/evasion mechanisms are included.

@@ -240,3 +240,134 @@ docker compose up -d --wait
 It completed successfully. The migration container exited with code 0, and all long-running services remained healthy. This successful recovery does not resolve the underlying whole-stack restart issue. For normal startup/recovery, follow the README's `up` commands and inspect `docker compose ps -a` for a successful one-shot migration exit as well as healthy long-running services. Preserve the PostgreSQL volume; deleting data is not part of this recovery procedure.
 
 Result: **restart limitation reproduced by the owner; recovery and persistence verification succeeded; underlying behavior remains unfixed.** The earlier successful `stop` / `start --wait` test is preserved above and is a different operation.
+
+## Supported lifecycle workflow testing — 13 October 2026
+
+These are newly executed tests of `scripts/stack-restart.sh`, separate from the owner-reported native restart failure. Docker Compose 5.5.1 and host Node.js 22.23.2 were used. The script implements ordered stop/start and independent state verification; it does not fix native `docker compose restart` or diagnose its DNS failure.
+
+Before mutation, Docker containers, projects, networks, volumes, and published ports were inventoried. The existing application and unrelated projects were left running. A previously absent project, `ingestion-lifecycle-20261013-1718`, used its own `postgres-data` volume and a temporary API-port override at localhost:3307. Temporary override files and the HTTP probe remained outside the repository. The committed Compose configuration and migration implementation were unchanged.
+
+Fresh startup through `docker compose up --build -d --wait` completed successfully: five long-running services became healthy and `migrate` exited 0. Database inspection confirmed `001_initial` and 20 Graphile migrations. Real HTTP triggers and polling verified all three sources; the completed rerun recorded:
+
+| Source     | Run ID                                 | Result/extractor    |
+| ---------- | -------------------------------------- | ------------------- |
+| structured | `18e9c5e4-9fe4-4224-8ab1-0a52da9a8d7c` | succeeded / jsonld  |
+| dom        | `47a6e047-4dcb-4728-bc02-e70cc5dfc3b6` | succeeded / dom     |
+| javascript | `9d32a32d-d2df-45da-8133-cb385482ddce` | succeeded / browser |
+
+The fixture scheduler had already populated initial offers. Explicit triggers were unchanged ingestions; history contained one original row per variant. Baseline API snapshots captured product/variant IDs, current price/currency/availability, and complete history rows:
+
+| Source     | Product ID                             | Variant ID                             | Current offer / history ID   |
+| ---------- | -------------------------------------- | -------------------------------------- | ---------------------------- |
+| structured | `dea42640-b598-4881-ad5b-fd4551eeb31c` | `9399478e-7685-4c2b-b265-9ae111cc2f8f` | 19.990000 USD / in_stock / 2 |
+| dom        | `a97439cc-09c8-4f37-b0d5-6c34eff796a8` | `05035d37-21cb-4c6d-9ea9-954e88a7936f` | 29.500000 USD / in_stock / 1 |
+| javascript | `50ad675b-e8ee-4774-85c5-fb8de93e35c6` | `d43be8f9-eca7-4ea6-8a29-84ef64add4a0` | 49.000000 USD / in_stock / 3 |
+
+| Scenario                                                          | Actual result                                                                                                                                                                                                                                                      |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Two ordinary script restarts, invoked from outside the repository | Exit 0 each; migration exit 0; all required services running/healthy; snapshots unchanged                                                                                                                                                                          |
+| Temporary migration command exits 23                              | Script exit 1 with migration-state diagnostics; API and worker remained stopped; no false success                                                                                                                                                                  |
+| Restore normal migration command and rerun                        | Script exit 0; snapshots unchanged                                                                                                                                                                                                                                 |
+| Controlled PostgreSQL readiness gate                              | Temporary health check required an absent marker; while PostgreSQL was starting, migration start timestamp remained unchanged and API/worker were stopped. Creating the marker released the gate; script exited 0, migration ran successfully, snapshots unchanged |
+| Restore normal health check and rerun                             | Script exit 0; snapshots unchanged                                                                                                                                                                                                                                 |
+
+Baseline and final snapshots compared equal, including history timestamps and run references. Canonical JSON (sorted keys, compact separators) SHA-256 was `783902b591672bc5e727ec0383d30d84eb6e22e0c47b7e3d9a14606a5fde1994`. The volume remained `ingestion-lifecycle-20261013-1718_postgres-data`, including when Compose recreated containers for temporary overrides. Freshness timestamps on products/current observations were not asserted invariant after unchanged ingestion; offer-history rows were.
+
+An initial probe pass encountered `UND_ERR_SOCKET` on its final snapshot because its HTTP connection survived an intentional restart in the client pool. The disposable probe was changed to request fresh connections and the complete workflow rerun passed. No application change was made. Initial mocked-test path assertions also needed physical-path normalization for macOS's temporary-directory alias; all corrected regressions subsequently passed.
+
+Captured disposable service logs contained zero example-token/runtime-password/bearer markers and zero inspected unhandled/unexpected-ingestion exception markers. This is bounded evidence, not a guarantee for arbitrary external logging. Cleanup removed only this test project's containers/networks/volume and its temporary probe/override files; the existing application remained healthy and unrelated resources were untouched.
+
+**Supported workflow validation: PASSED.** Native whole-stack restart remains unsupported and unfixed. ShellCheck was unavailable; shell syntax, mocked regressions, and real Compose verification were performed instead. Failure can leave the stack stopped or partially started; the script preserves data and requires operator diagnosis rather than automatic migration retries.
+
+## Final guarded lifecycle runtime validation — 13 October 2026
+
+**Result: PASSED for the tested disposable environment.** This run exercised the final script after alternate-target acknowledgment and mandatory dependency validation were added. Environment: macOS host, Node.js 22.23.2, Docker Compose 5.5.1, Linux/arm64 containers. Existing immutable local image IDs were reused with `--no-build`; no image build or application change was performed.
+
+Before mutation, machine-readable inventories were captured using:
+
+```sh
+docker compose ls --format json
+docker ps -a --format '{{json .}}'
+docker network ls --format '{{json .}}'
+docker volume ls --format '{{json .}}'
+```
+
+There were 32 containers, 11 networks, and 14 volumes; existing projects included `web-data-ingestion-engine`, `auth-service-lab`, `ai-support-desk`, `core`, and `scan`. Published ports were inspected. The original ingestion API remained on localhost:3000. The newly selected project `ingestion-lifecycle-final-20261013-c77d12` had no existing containers/networks/volumes. A localhost socket check selected free port 55230. Resolved configuration confirmed that only localhost:55230 was published and the database volume was newly scoped to `ingestion-lifecycle-final-20261013-c77d12_postgres-data`, with no external volume.
+
+Temporary files were outside the repository at `/tmp/ingestion-final-lifecycle-JCkeyo`. `isolated.yaml` assigned each service its corresponding existing immutable image ID and replaced the API ports with `ports: !override ["127.0.0.1:55230:3000"]`. The harness sanitized inherited `COMPOSE_*` variables and acknowledgment; opt-in was set only for individual disposable script invocations. The lifecycle commands below reproduce the executed arguments. `R` uses the current repository directory rather than publishing the original workstation-specific absolute path:
+
+```sh
+P=ingestion-lifecycle-final-20261013-c77d12
+R=$(pwd -P)
+T=/tmp/ingestion-final-lifecycle-JCkeyo
+
+docker compose --project-directory "$R" -p "$P" -f "$R/compose.yaml" -f "$T/isolated.yaml" config --format json
+docker compose --project-directory "$R" -p "$P" -f "$R/compose.yaml" -f "$T/isolated.yaml" up -d --no-build --wait
+
+# Executed twice; each returned 0.
+COMPOSE_PROJECT_NAME="$P" COMPOSE_FILE="$R/compose.yaml:$T/isolated.yaml" INGESTION_STACK_ALLOW_ALTERNATE_TARGET=1 /bin/bash "$R/scripts/stack-restart.sh"
+
+# Weakened worker -> browser gate: service_started instead of service_healthy.
+COMPOSE_PROJECT_NAME="$P" COMPOSE_FILE="$R/compose.yaml:$T/isolated.yaml:$T/weakened.yaml" INGESTION_STACK_ALLOW_ALTERNATE_TARGET=1 /bin/bash "$R/scripts/stack-restart.sh"
+
+# Acknowledgment absent from the invocation environment.
+COMPOSE_PROJECT_NAME="$P" COMPOSE_FILE="$R/compose.yaml:$T/isolated.yaml" /bin/bash "$R/scripts/stack-restart.sh"
+
+# failure.yaml replaced only migrate.command with [node, -e, "process.exit(23)"].
+COMPOSE_PROJECT_NAME="$P" COMPOSE_FILE="$R/compose.yaml:$T/isolated.yaml:$T/failure.yaml" INGESTION_STACK_ALLOW_ALTERNATE_TARGET=1 /bin/bash "$R/scripts/stack-restart.sh"
+
+# Recovery without the failure override.
+COMPOSE_PROJECT_NAME="$P" COMPOSE_FILE="$R/compose.yaml:$T/isolated.yaml" INGESTION_STACK_ALLOW_ALTERNATE_TARGET=1 /bin/bash "$R/scripts/stack-restart.sh"
+
+docker compose --project-directory "$R" -p "$P" -f "$R/compose.yaml" -f "$T/isolated.yaml" down --volumes
+```
+
+Resolved JSON showed all five edges with `required: true`: migrate → postgres `service_healthy`; API → migrate and worker → migrate `service_completed_successfully`; worker → fixture-server and worker → browser `service_healthy`. Fresh startup and both script restarts produced migrate exited/0 and five running/healthy services. Database queries confirmed `001_initial` in `app_migrations` and 20 Graphile migrations.
+
+Authenticated real HTTP POSTs to `/v1/sources/{source}/runs` were followed by polling `/v1/runs/{id}` until terminal state:
+
+| Source     | Run ID                                 | Actual result |
+| ---------- | -------------------------------------- | ------------- |
+| structured | `e4d546b5-f6a4-4d6d-8758-1d783da69f24` | succeeded     |
+| dom        | `db340969-b06b-41fe-91a1-04f4187be37e` | succeeded     |
+| javascript | `51a24ee4-fe4c-4ce6-8cfb-2b83ec4955a7` | succeeded     |
+
+The scheduler had populated the initial offers; the explicit runs observed unchanged fixtures. Baseline and subsequent read-only PostgreSQL queries compared product IDs/source keys/titles, variant IDs/product keys, current price/currency/availability/last-change timestamps, and **every field of every history row**, including observation timestamps and run references. Snapshots matched after both restarts and recovery: three products, three variants, three offers, three history rows, no duplicates. Current observation/product freshness fields were not asserted unchanged because scheduled ingestion can refresh them.
+
+| Source     | Product ID                             | Variant ID                             | Offer / history ID       |
+| ---------- | -------------------------------------- | -------------------------------------- | ------------------------ |
+| structured | `691e3b0b-e965-4ce5-bcee-592ca9c8c9dc` | `66532289-1d21-4df7-b114-b6d124320b95` | 19.99 USD / in_stock / 1 |
+| dom        | `cc9f01ea-139d-49e1-8a05-8bc80af1c4f3` | `c0d8d00d-3ac8-409a-aa09-66d57b2154d4` | 29.5 USD / in_stock / 2  |
+| javascript | `93c623af-0fb6-47ab-a28d-9c76a7671c90` | `61cb2ed1-e782-4ed8-ab25-ebb73c40eee2` | 49 USD / in_stock / 3    |
+
+The matching snapshot SHA-256 (Node.js `JSON.stringify` of the ordered query result) was `28039f1249b413386cffed99c0da583692fe64850218314684345c388637f1b7`. Read-only SQL evidence was obtained with `docker exec "$P-postgres-1" psql -U ingestion -d ingestion -At -c ...`; container evidence used `docker ps -aq --filter label=com.docker.compose.project=...` followed by `docker inspect --format '{{json .}}' ID`. Before/after rejection snapshots included IDs, status, exit code, health, mount names, and start/finish timestamps.
+
+The catalog snapshot SQL used for both disposable and owner read-only evidence was:
+
+```sql
+SELECT json_build_object(
+  'products', (SELECT json_agg(x ORDER BY id) FROM
+    (SELECT id,source_id,external_key,title FROM products) x),
+  'variants', (SELECT json_agg(x ORDER BY id) FROM
+    (SELECT id,product_id,external_key FROM variants) x),
+  'offers', (SELECT json_agg(x ORDER BY variant_id) FROM
+    (SELECT variant_id,price,currency,availability,last_changed_at FROM offer_current) x),
+  'history', (SELECT json_agg(x ORDER BY id) FROM offer_history x)
+);
+```
+
+The migration evidence query was `SELECT name FROM app_migrations ORDER BY id; SELECT count(*) FROM graphile_worker.migrations;`. The temporary Node harness sent JSON-body `{}` POST requests with a bearer token read only into memory from the disposable API environment; it did not print that token. Completed run page results recorded extractors `jsonld`, `dom`, and `browser`, respectively, with one accepted record, zero rejected records, and zero changes per explicit unchanged run.
+
+The weakened gate returned 1 before “Stopping stack”; missing acknowledgment also returned 1 before that phase. All disposable container state/start/finish snapshots remained identical across both refusals. Migration injection returned 1 with `Service migrate: state=exited, exit=23`; no success message appeared, and API/worker remained stopped. Removing the failure override recovered with exit 0 and preserved the catalog/history snapshot. Failure left a partially running stack, as documented.
+
+Three unexpected **probe errors** were explicitly corrected: the initial read-only catalog query used nonexistent column names (before any Docker mutation); a later migration query used `pgmigrations` instead of `app_migrations`; and an owner-state comparison differed only because JSON serialization omitted an undefined migrator health field. Schema-correct queries and normalized JSON comparison passed. The latter two checks continued against the same disposable environment; these errors were not application defects or successful scenarios.
+
+Original-owner container IDs, start/finish timestamps, state, and volume mounts compared equal; its catalog/history snapshot also matched. `/health/ready` returned `{"status":"ready"}` before testing, after recovery, and after cleanup. No owner lifecycle command or ingestion trigger was executed. Disposable logs contained zero inspected `EAI_AGAIN`, `Unhandled`, or `Unexpected ingestion failure` markers; this bounded inspection is not a security review.
+
+Cleanup removed only the six disposable containers, five disposable networks, and its new database volume. Final inventories exactly matched all original container/network/volume identities and counts. Shared images were retained. Temporary evidence files were retained locally to support review, without saving resolved credential-bearing Compose configuration. This run validates the final workflow on the tested environment; it does not fix native whole-stack restart, certify arbitrary alternate configurations, or prove every timing/interruption scenario.
+
+## Owner-performed supported-workflow smoke test — 13 October 2026
+
+The owner reported independently executing `scripts/stack-restart.sh` against the original local stack with exit code 0. Post-restart evidence supplied by the owner: five long-running services healthy, migrator exited 0, API readiness HTTP 200, and all nine PostgreSQL tables present. Reported data counts were products=3, variants=3, offer_current=3, offer_history=3, and ingestion_runs=6.
+
+**Owner-reported smoke result: PASSED for startup/readiness and the observed post-restart state.** These are owner-provided results, not commands executed during this reconciliation. No pre-restart owner-data baseline was supplied, so exact identity, timestamp, offer/history preservation, or absence of newly introduced duplicates across this owner restart cannot be established from these counts. The isolated validation above did compare pre/post snapshots and remains separate evidence. Native `docker compose restart` remains unsupported and unfixed; the supported workflow is `scripts/stack-restart.sh`.

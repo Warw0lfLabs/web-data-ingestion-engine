@@ -40,8 +40,11 @@ beforeEach(async () => {
   fixture.states.clear();
 });
 afterAll(async () => {
-  await closeServer(fixture.server);
-  await pool.end();
+  try {
+    if (fixture) await closeServer(fixture.server);
+  } finally {
+    await pool.end();
+  }
 });
 async function ingest(index = 0) {
   const source = sources[index]!;
