@@ -320,3 +320,20 @@ Final results: **136 unit tests passed (8 files), 22 integration passed (1 file)
 Final inventories restored all original 32 container, 14 volume, and 11 network identities. The owner API lifecycle timestamps and healthy state were unchanged; read-only before/after comparisons matched product/variant identities, current offers/last-change state, and complete history rows. No owner lifecycle command or database write was executed. Generated project images and disposable database state were removed; Docker build cache and local artifact files are retained for efficient review/reproduction. No production code, migration, production Compose/Dockerfile, dependency, or security policy was edited.
 
 **Local CI implementation validation: PASS. Hosted compatibility: NOT YET VERIFIED.** Local execution used Linux/arm64 under Colima, not GitHub's Ubuntu/amd64 kernel/AppArmor environment. The new hosted job will fail honestly if sandbox launch/evidence is unavailable. A successful owner-authorized hosted run is still required; this is not final project completion. After review, the owner must commit/push the approved changes and inspect the Development checks run for sandbox evidence and complete 136/22/10 test counts. No commit, push, hosted execution, or deployment was performed here.
+
+## Hosted CI reconciliation — 13 October 2026
+
+This addendum supersedes the preceding stage's pending-hosted-verification status without changing its historical execution record. The read-only Definition of Done audit retrieved the actual GitHub run metadata and logs with:
+
+```sh
+gh run view 38444687594 --repo Warw0lfLabs/web-data-ingestion-engine --json conclusion,headSha,jobs,url
+gh run view 38444687594 --repo Warw0lfLabs/web-data-ingestion-engine --log
+```
+
+[Development checks run 38444687594](https://github.com/Warw0lfLabs/web-data-ingestion-engine/actions/runs/38444687594) concluded success for commit `0a1b314afda8643418987a16f4035112be2e79e2`. Actual hosted logs showed **136 unit tests in eight files, 22 integration tests in one file, and 10 browser tests in one file passed: 168 total**. Integration/browser report assertions require zero failed, pending, or TODO tests. Formatting, lint, typecheck, build, Compose configuration, and image-build steps also succeeded. No tests or hosted workflow were rerun for this documentation reconciliation.
+
+The hosted Ubuntu 24.04.5/amd64 run emitted sandbox evidence for both direct launch and server launch/connect at 18:12:37 UTC: UID 1001, browser seccomp filter count 1, renderer filter count 2. The verifier also required zero effective capabilities, no-new-privileges, separate renderer user/PID/network namespaces, and absence of sandbox-bypass arguments before accepting those records. The logged workflow shell included `-e -o pipefail`; all six pipeline propagation regressions passed. Failure-only artifact upload was skipped on this successful run, so it is not evidence of that upload branch executing.
+
+**Technical CI validation: PASS for this commit and tested environment. Full Definition of Done: INCOMPLETE.** Final clean-checkout owner smoke testing and explicit owner acceptance are **PENDING**; delivery and owner acknowledgment of the architecture/operation walkthrough are **PENDING**. Earlier owner restart/readiness evidence is preserved but does not establish clean-state final acceptance or exact data preservation without a baseline. Use the [pending owner checklist](manual-testing.md#final-owner-acceptance-checklist--pending).
+
+The historical false-green run remains an incident with eight failures, not a test pass. Native whole-stack `docker compose restart` remains unsupported and unfixed; `scripts/stack-restart.sh` is the supported workflow. V1 demonstration restrictions, unvalidated production deployment, pg compatibility warning, and forced-termination cleanup limitations remain. The recent CI container/seccomp changes received a focused independent read-only review with no blocking finding; see the [security addendum](security-review.md#ci-container-and-seccomp-review--13-october-2026).

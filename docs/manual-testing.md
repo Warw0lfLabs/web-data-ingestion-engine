@@ -371,3 +371,138 @@ Cleanup removed only the six disposable containers, five disposable networks, an
 The owner reported independently executing `scripts/stack-restart.sh` against the original local stack with exit code 0. Post-restart evidence supplied by the owner: five long-running services healthy, migrator exited 0, API readiness HTTP 200, and all nine PostgreSQL tables present. Reported data counts were products=3, variants=3, offer_current=3, offer_history=3, and ingestion_runs=6.
 
 **Owner-reported smoke result: PASSED for startup/readiness and the observed post-restart state.** These are owner-provided results, not commands executed during this reconciliation. No pre-restart owner-data baseline was supplied, so exact identity, timestamp, offer/history preservation, or absence of newly introduced duplicates across this owner restart cannot be established from these counts. The isolated validation above did compare pre/post snapshots and remains separate evidence. Native `docker compose restart` remains unsupported and unfixed; the supported workflow is `scripts/stack-restart.sh`.
+
+## Final owner acceptance checklist — PENDING
+
+This is a procedure for the owner, **not an executed test report**. Every action and result below is **PENDING**. Earlier agent workflows and the owner's original-stack restart do not satisfy this final clean-state acceptance step. The walkthrough and its owner acknowledgment are also **PENDING**.
+
+### Clean checkout and isolation — PENDING
+
+Use a new checkout at application/CI baseline commit `0a1b314afda8643418987a16f4035112be2e79e2`; record the actual full commit. Read README and this checklist before starting. That baseline predates this reconciliation; record the documentation revision used separately. A later documentation-only commit may instead be selected explicitly, recording both revisions.
+
+Run in Bash in a fresh directory. The following are proposed commands, not commands executed for this checklist:
+
+```sh
+git clone https://github.com/Warw0lfLabs/web-data-ingestion-engine.git ingestion-owner-acceptance
+cd ingestion-owner-acceptance
+git checkout --detach 0a1b314afda8643418987a16f4035112be2e79e2
+git rev-parse HEAD
+npm ci
+cp .env.example .env
+
+# Inspect existing resources and published ports before any Docker mutation.
+docker context show
+docker compose ls --format json
+docker ps -a --format '{{json .}}'
+docker network ls --format '{{json .}}'
+docker volume ls --format '{{json .}}'
+
+# Sanitize inherited Compose target controls in this test shell.
+for key in ${!COMPOSE_@}; do unset "$key"; done
+unset INGESTION_STACK_ALLOW_ALTERNATE_TARGET
+OWNER_PROJECT="ingestion-owner-$(date +%s)-$$"
+OWNER_ROOT=$(pwd -P)
+OWNER_EVIDENCE=$(mktemp -d)
+OWNER_OVERRIDE="$OWNER_EVIDENCE/isolated.yaml"
+cat > "$OWNER_OVERRIDE" <<'YAML'
+services:
+  api:
+    ports: !override ["127.0.0.1::3000"]
+YAML
+
+docker ps -aq --filter "label=com.docker.compose.project=$OWNER_PROJECT"
+docker network ls -q --filter "label=com.docker.compose.project=$OWNER_PROJECT"
+docker volume ls -q --filter "label=com.docker.compose.project=$OWNER_PROJECT"
+owner_compose() {
+  docker compose --project-directory "$OWNER_ROOT" -p "$OWNER_PROJECT" \
+    -f "$OWNER_ROOT/compose.yaml" -f "$OWNER_OVERRIDE" "$@"
+}
+owner_compose config --quiet
+```
+
+**PENDING safety gate:** all three project inventories must succeed and be empty. Verify the override replaces the default API binding with a dynamically allocated loopback port, no external/shared volumes or bind mounts are selected, and the database volume belongs only to this new project. Review resolved configuration privately; it contains example credentials and must not be pasted into evidence. Stop on a collision, unsupported Compose syntax, or ambiguous isolation. Never use the default project or existing owner volumes for this test. Capture existing container IDs/state and volume identities for comparison afterward.
+
+### Startup and functional checks — PENDING
+
+```sh
+owner_compose up --build -d --wait
+owner_compose ps -a
+owner_compose logs --no-color migrate
+owner_compose port api 3000
+```
+
+**PENDING:** record the allocated loopback port as `OWNER_BASE=http://127.0.0.1:PORT` before requests. Expect five healthy long-running services and migrate exited 0. Inspect migration output and query `app_migrations` through this project's PostgreSQL service; expect `001_initial`.
+
+```sh
+owner_compose exec -T postgres psql -U ingestion -d ingestion \
+  -c 'SELECT name FROM app_migrations ORDER BY id;'
+curl --fail-with-body -sS "$OWNER_BASE/health/live"
+curl --fail-with-body -sS "$OWNER_BASE/health/ready"
+curl --fail-with-body -sS "$OWNER_BASE/docs/json"
+```
+
+**PENDING:** open `$OWNER_BASE/docs` in a browser and verify Swagger operations. Confirm the three configured sources through `/v1/sources` and individual source endpoints. Scheduled catch-up may already populate offers; record that separately from manual triggers.
+
+For each source, trigger with the token from this disposable checkout's `.env` without printing headers/token:
+
+```sh
+OWNER_BASE="$OWNER_BASE" node --env-file=.env --input-type=module <<'JS'
+for (const source of ['structured', 'dom', 'javascript']) {
+  const response = await fetch(`${process.env.OWNER_BASE}/v1/sources/${source}/runs`, {
+    method: 'POST',
+    headers: {'content-type': 'application/json', authorization: `Bearer ${process.env.API_TOKEN}`},
+    body: '{}',
+  });
+  console.log(source, response.status, await response.text());
+}
+JS
+```
+
+**PENDING:** expect 202 and save each run ID. If catch-up holds the source active, inspect/poll that real run first; a 409 is not a successful manual ingestion. Poll `/v1/runs/ID` until terminal using a bounded deadline (for example two minutes); do not assume completion from 202. Expect `succeeded`, accepted=1, and extractor `jsonld`, `dom`, or `browser` respectively. Record intermediate states actually observed; fast jobs need not expose every transition to polling.
+
+**PENDING:** inspect `/v1/products`, every product detail, returned variants/current offers, and `/v1/variants/ID/history`. Expect three demonstration products/variants and initial prices 19.99/29.50/49.00 USD, in stock. Save actual IDs and complete history responses without credentials. Trigger an unchanged structured run after its previous run finishes, poll it, and compare history IDs and every history row before/after. Expect changed=0 and identical history; observation timestamps may advance.
+
+### Supported restart and persistence — PENDING
+
+After all manual/catch-up runs finish, save a database baseline using the catalog snapshot SQL documented in the final guarded lifecycle section above. Include product/variant identities, current price/currency/availability/last-change state, and complete offer-history rows. Do not compare freshness fields as immutable: later scheduled observations can refresh them.
+
+```sh
+COMPOSE_PROJECT_NAME="$OWNER_PROJECT" \
+COMPOSE_FILE="$OWNER_ROOT/compose.yaml:$OWNER_OVERRIDE" \
+INGESTION_STACK_ALLOW_ALTERNATE_TARGET=1 \
+bash "$OWNER_ROOT/scripts/stack-restart.sh"
+owner_compose ps -a
+curl --fail-with-body -sS "$OWNER_BASE/health/ready"
+```
+
+**PENDING:** record script exit status, five healthy services, and migrator exited 0. Re-query the same snapshot and compare all selected values/complete history against the saved baseline. Expect unchanged identities/current state/history and no duplicate entries. Inspect bounded service logs for unexpected crashes/errors and accidental token disclosure without copying secrets. Do not run native `docker compose restart`: it remains unsupported and unfixed.
+
+### Disposable cleanup and acceptance record — PENDING
+
+Verify the effective project and database volume ownership again before cleanup. The following removes only the named disposable project and its newly created volume; never substitute the default project or use a global prune:
+
+```sh
+owner_compose down --volumes
+docker ps -aq --filter "label=com.docker.compose.project=$OWNER_PROJECT"
+docker network ls -q --filter "label=com.docker.compose.project=$OWNER_PROJECT"
+docker volume ls -q --filter "label=com.docker.compose.project=$OWNER_PROJECT"
+```
+
+**PENDING:** all project queries must succeed and return empty. Compare original resource IDs/state/volume identities and confirm the owner's original application/data were not changed. Retain sanitized evidence outside the repository; do not publish `.env`, resolved configuration, or request headers. Shared build images/cache may remain; do not prune unrelated resources.
+
+| Owner action / expected outcome                          | Actual commands and evidence | Actual result |
+| -------------------------------------------------------- | ---------------------------- | ------------- |
+| Checkout, full commit and documentation revision         | PENDING                      | PENDING       |
+| Original inventory, isolated project/volume/port         | PENDING                      | PENDING       |
+| Startup, migrations, five healthy services               | PENDING                      | PENDING       |
+| Liveness/readiness, Swagger, source reads                | PENDING                      | PENDING       |
+| Three manual runs, polled completion/extractor evidence  | PENDING                      | PENDING       |
+| Catalog, variants, current offers and complete histories | PENDING                      | PENDING       |
+| Unchanged rerun; no duplicate history                    | PENDING                      | PENDING       |
+| Supported restart; matching before/after snapshots       | PENDING                      | PENDING       |
+| Log inspection and scoped cleanup                        | PENDING                      | PENDING       |
+| Original resources/data unaffected                       | PENDING                      | PENDING       |
+| Architecture/operation walkthrough and acknowledgment    | PENDING                      | PENDING       |
+| Owner acceptance: name, date, accepted commit, decision  | PENDING                      | PENDING       |
+
+Record unexpected failures and recovery separately; recovery does not erase an initial failure. Owner acceptance and the overall Definition of Done remain **PENDING** until actual evidence and explicit acknowledgment are supplied.

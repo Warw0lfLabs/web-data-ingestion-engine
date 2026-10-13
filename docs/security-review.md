@@ -205,3 +205,13 @@ The disposable Compose environment, networks, PostgreSQL volume, and host listen
 - Review/remediation documentation: `README.md`, `docs/source-policy.md`, `docs/security-review.md`.
 
 Technical references checked: [Docker gateway modes](https://docs.docker.com/engine/network/port-publishing/#gateway-modes), [Playwright Docker sandbox guidance](https://playwright.dev/docs/docker), [Fastify rate limiting](https://github.com/fastify/fastify-rate-limit), and [OWASP SSRF prevention](https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html). The findings above rely on repository/runtime evidence, not those references alone.
+
+## CI container and seccomp review — 13 October 2026
+
+A focused independent read-only review covered the CI changes subsequently published in commit `0a1b314afda8643418987a16f4035112be2e79e2`: workflow failure propagation, `compose.ci.yaml`, the digest-pinned non-root Playwright image, the complete seccomp profile and CI-only chroot derivation, both sandbox verification paths, and disposable-resource cleanup. **No blocking finding was identified in the reviewed changes; the recommendation was approval for hosted validation.** Production browser behavior and security configuration were unchanged.
+
+The CI-only profile removes the chroot rule's CAP_SYS_CHROOT condition, allowing Chromium's nested user-namespace operation while retaining kernel capability checks. The test container drops all outer capabilities and enables no-new-privileges; it uses no privileged mode, unconfined profile, host namespaces, Docker socket, or host credential mounts. The verifier fails on missing evidence and requires separate renderer namespaces and additional seccomp filtering for both launch paths. Local probes recorded denial of outer-process chroot. This scoped syscall allowance is not a claim of complete Chromium/kernel security.
+
+Non-blocking review risks remain: inventory command substitutions can confuse Docker errors with empty inventories; SIGKILL/runner loss can interrupt cleanup; PostgreSQL uses a mutable version tag. Hosted compatibility was pending at review time and subsequently passed in [run 38444687594](https://github.com/Warw0lfLabs/web-data-ingestion-engine/actions/runs/38444687594), with both sandbox records and all 168 tests passing. See the [hosted reconciliation](validation.md#hosted-ci-reconciliation--13-october-2026) for evidence and limits.
+
+This supplements the historical application review within the **V1 local demonstration threat model**. It does not establish production readiness, image-CVE clearance, arbitrary public browser safety, owner acceptance, or walkthrough completion. Those last two owner stages remain **PENDING**.
