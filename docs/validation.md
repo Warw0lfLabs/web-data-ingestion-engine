@@ -1,5 +1,7 @@
 # Final validation
 
+**CI evidence correction (13 October 2026):** GitHub success conclusions are not proof of successful tests. Run `38440125182` was confirmed false-green with eight failed tests. See the CI investigation below; earlier publication/status statements are historical reports of GitHub conclusions.
+
 This is the final-validation stage report. Later documentation finalization reorganized README, architecture, and source policy without changing application code/configuration or the recorded results below.
 
 Status: **PASSED**, 2026-10-06. This validates V1 after implementation, manual testing, and security review. GitHub-hosted CI and production deployment were not exercised.
@@ -245,3 +247,76 @@ The initial new regression assertion expected only `ECONNREFUSED`; this macOS ho
 Final rerun: **120 unit tests passed in 6 files**, including the setup-failure regression; **22 integration tests passed in 1 file**; **10 browser tests passed in 1 file**. Total: **152 passed, zero failed, zero skipped** in the actual validation suites. Formatting, lint, strict typecheck, build, Bash syntax, and staged/unstaged diff checks passed after the test correction and documentation updates. The first unit run had 119 passed/1 failed due to the newly added error-code assertion described above; the successful complete rerun supersedes that attempt. README now records 152 cases.
 
 **Recommendation: PASS for resolution of this integration-validation blocker.** This supersedes the prior reconciliation's CHANGES REQUESTED recommendation for missing database/unsafe teardown. Changed during this task only: `tests/integration/engine.test.ts`, new `tests/unit/integration-cleanup.test.ts`, README's suite count, and this report. Earlier pending lifecycle/manual-test documentation changes were preserved. No application, migration, production database, Compose architecture, Dockerfile, or dependency change; no owner-stack lifecycle operation, commit, push, or deployment. Existing native-restart, pg deprecation, and lack of hosted CI for pending changes remain documented limitations.
+
+## False-green CI investigation — 13 October 2026
+
+Downloaded the actual log with `gh run view 38440125182 --repo Warw0lfLabs/web-data-ingestion-engine --log`, retained outside the repository. [Run 38440125182](https://github.com/Warw0lfLabs/web-data-ingestion-engine/actions/runs/38440125182) for commit `243e0dbcb964cd89d8ddbb14660011fe639dbb88` reported success despite **120 unit passed, 21 integration passed/1 failed, 3 browser passed/7 failed**: 144 passed, eight failed. This explicitly corrects any interpretation of green hosted status as complete test success. The older publication addendum records a GitHub conclusion only; its underlying tests were not re-audited here.
+
+Confirmed workflow cause: the log shows `/usr/bin/bash -e {0}` for all three test pipelines. Without pipefail, `npm ... | tee ...` returns tee's successful status and does not fail the step. Consequently failure-only artifact upload did not run. Changed every test pipeline to begin with `set -o pipefail` and set the job's run shell explicitly to Bash. Logs and failure-conditioned artifact upload are preserved; no continue-on-error, retry, or assertion change was added. [GitHub shell documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell) distinguishes implicit shell behavior from explicit Bash's pipefail behavior.
+
+Six new unit cases parse the real workflow bodies and execute each with a temporary fake npm command returning 0 or 23, under `bash -e` without implicit pipefail. All three failing commands must propagate exit 23, and each log must retain the probe output; all three successful commands must return 0. This validates failure propagation locally without intentionally failing or executing the production workflow. Temporary probe directories are cleaned up.
+
+### Hosted browser/integration analysis
+
+The actual runner was Ubuntu 24.04.5, image `ubuntu-24.04` version `20261004.327.1`, Node.js 24 versus local macOS Node.js 22.23.2. The direct Playwright `launchServer` test reports Chromium's fatal **No usable sandbox** message. This is confirmed sandbox launch failure for that test, not exhaustion of extraction time. Other browser exceptions pass through `BrowserExtractor`'s generic catch and become retryable `BROWSER_TIMEOUT`, hiding their original cause. Seven browser cases failed within a roughly three-second suite, despite normal 30-second source budgets. Network/WebSocket assertions did not prove policy violations were handled: they received the launch error classification instead. Three passing cases (forbidden source, expected timeout, generic byte-error rejection) do not establish browser startup.
+
+The integration failure is the JavaScript/browser pipeline case at line 219: the ingestion attempt logged retryable `BROWSER_TIMEOUT`, persisted retrying/accepted=0, and the test expected succeeded/accepted=1. The retry state is consistent with the runner's error handling; it is not evidence of a persistence/queue defect. The shared sandbox environment is the strongest explanation, but the integration log masks the raw launch exception, so that exact cause is inferred rather than separately proven for this attempt.
+
+Reviewed deadline/queue/resource serialization, context/browser close paths, fixture readiness, and test assumptions. Normal tests have 30-second source budgets; explicit timeout/queue tests use smaller budgets intentionally. CI runs the suites sequentially. The fast fatal launch plus direct sandbox diagnostic supplies no evidence that resource contention, arbitrary sleeps, asynchronous teardown, or a longer timeout would fix this run. The independent setup-failure cleanup regression remains in place. No production exception mapping, timeout, cleanup, security policy, or assertion was changed in this task.
+
+Ubuntu's AppArmor unprivileged-user-namespace restrictions are a plausible underlying sandbox incompatibility; the kernel/AppArmor policy was not logged, so that specific mechanism remains unconfirmed. [Chromium's documentation](https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md) describes executable-scoped AppArmor allowances and sandbox-helper alternatives. Recommended next verification: capture the actual runner policy and installed Chromium executable paths, test a sandboxed direct launch, then validate a narrowly scoped runner-only profile for those exact executables (including headless shell) or a suitable sandbox-enabled isolated test environment. Do not globally disable AppArmor/user-namespace restrictions, use `--no-sandbox`, or grant privileged containers merely to turn tests green. Such an environment change was not implemented because it cannot be demonstrated on this macOS host without an equivalent Linux runner.
+
+### Local validation and isolation
+
+Inventory and localhost:5544 bind/name checks passed before provisioning. Used only the documented new `ingestion-tests` database:
+
+```sh
+docker run -d --name ingestion-tests -e POSTGRES_USER=ingestion -e POSTGRES_PASSWORD=testing -e POSTGRES_DB=ingestion_test -p 127.0.0.1:5544:5432 postgres:17-bookworm
+docker exec ingestion-tests pg_isready -U ingestion -d ingestion_test
+TEST_DATABASE_URL=postgresql://ingestion:testing@localhost:5544/ingestion_test npm run test:integration
+npm test
+npm run test:browser
+npm run format:check
+npm run lint
+npm run typecheck
+npm run build
+bash -n scripts/stack-restart.sh
+git diff --check
+docker rm -f -v ingestion-tests
+```
+
+All 22 integration and 10 browser cases passed locally, with no skips. The hosted sandbox failure did not reproduce on this host; this is not proof of hosted recovery. The known pg busy-client deprecation warning remains. Cleanup restored all original identities: 32 containers, 14 volumes, 11 networks; owner API start/finish timestamps and healthy state were unchanged. No owner lifecycle command was run.
+
+Final local checks: **126 unit passed (7 files), 22 integration passed (1 file), 10 browser passed (1 file): 158 passed, zero failed/skipped**. Formatting, lint, typecheck, build, Bash syntax, and staged/unstaged diff checks passed. The six pipeline regressions prove exit/log behavior, not execution of a GitHub job or artifact upload. Reviewed the final four-file diff for unrelated changes and security implications: only workflow shell/pipeline behavior, unit probes, README, and this report changed. No additional privileges, security relaxation, dependencies, timeout increases, test weakening, or production code changes.
+
+**Recommendation: CHANGES REQUESTED for overall hosted-CI remediation.** False-green exit propagation is fixed and locally regression-tested; the separate Linux sandbox environment still needs a verified sandbox-preserving solution and an honest hosted rerun. No production behavior was changed, and no commit, push, deployment, or owner-stack restart was performed. Historical local integration/lifecycle passes remain valid within their environments; hosted green conclusions are not equivalent evidence.
+
+## Sandboxed CI implementation and local validation — 13 October 2026
+
+Implemented CI/test infrastructure only. The workflow pins `ubuntu-24.04`, preserves explicit Bash/pipefail and failure artifact handling, keeps unit/static checks on the host, and runs integration/browser tests inside a dedicated non-root image. `compose.ci.yaml` is independent of production Compose: it creates only disposable PostgreSQL and test services, with no published ports and an internal isolated-gateway bridge. `scripts/ci-run.sh` generates its project identity, sanitizes Compose selectors, rejects existing project/name/image collisions before mutation, and uses explicit file/project flags. Normal exit and INT/TERM handling capture artifacts and remove the owned one-off container, project network/volume, and exact project-built image. Forced termination/daemon failure can interrupt cleanup; diagnostics and project identity remain available.
+
+### Image evidence
+
+Executed `docker buildx imagetools inspect mcr.microsoft.com/playwright:v1.63.0-noble` against Microsoft's registry. Verified manifest-index digest: `sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27`. Reported platform manifests: amd64 `sha256:bc6ab0d6d44ff4826e4cb8c1e6d801e185bfc42bb0753f8e2a30efc70db054c7`; arm64 `sha256:a0f4498920a5dbac63196d9140ed738ef00470f27e2e74029abd8850b7bd5717`. The CI Dockerfile pins the index digest and checks that the installed locked Playwright package is exactly 1.63.0. No digest was guessed; no production image reference was changed.
+
+### Security and diagnostics
+
+The test runtime uses `pwuser` (observed UID 1001), `cap_drop: [ALL]`, no-new-privileges, the existing seccomp policy plus one CI-only change, 256 MiB private shared memory, a 2 GiB memory bound, and a 256-PID bound. No privileged mode, added capabilities, host network/IPC/PID sharing, Docker socket mount, unconfined profile, host-policy change, or browser sandbox bypass was used. Build-time package installation occurs separately from the isolated runtime and uses the lockfile. The existing production browser/user/seccomp/network settings remain unchanged.
+
+The initial strict probe failed at Chromium's `sys_chroot` call. Inspection established that the original profile permits `chroot` only when CAP_SYS_CHROOT is retained, incompatible with dropping all outer capabilities. `scripts/ci-seccomp.mjs` derives a temporary profile and removes only that rule's capability condition; all other rules are unchanged. Chromium can then chroot inside its own user namespace while outer kernel capability checks still deny the operation. A separate non-root, zero-capability probe executing `chroot /` received Operation not permitted. A unit comparison verifies that no other policy rule changes. This targeted syscall allowance increases the seccomp-permitted operation set by one; it does not grant outer capabilities or disable kernel checks.
+
+The first evidence probe also hit an unsupported CDP command-line method. The final check uses `SystemInfo.getProcessInfo` and actual `/proc` metadata instead. Chromium Headless Shell does not expose `chrome://sandbox` here, so a successful page load or UI substitute is not accepted as proof. For both default `launch` and `launchServer`/connect, the final verifier requires non-root processes, zero effective capabilities, NoNewPrivs=1, seccomp filter mode, no bypass arguments, at least one renderer, distinct renderer user/PID/network namespace identities, and more renderer seccomp filters than the browser's Docker baseline. Inconclusive evidence fails closed. It emits only bounded security metadata, not environment values or full command lines.
+
+Actual final evidence for both launch modes: browser filter count 1; renderer filter count 2; distinct renderer namespace identities; non-root UID 1001 and zero outer capabilities. Namespace identifiers may be reused after processes exit and are not compared across independent launches. Seven negative unit cases reject missing evidence/renderers/namespaces, shared namespace/filter state, root execution, and bypass arguments. Production launch-error classification still maps generic failures to BROWSER_TIMEOUT; the CI preflight exposes failures directly without altering application behavior.
+
+### Executed validation
+
+Before mutation, Docker inventories and project/name/port checks were performed. Temporary probes used a uniquely named, network-disabled container removed on exit. The actual final command was `bash scripts/ci-run.sh /tmp/ingestion-ci-final-artifacts-3`; it completed with exit 0 against project `ingestion-ci-1791914497-59475`, using the current CI Dockerfile/profile/network/test runner. Integration and browser commands run once per invocation with default and JSON reporters. Post-run assertions require exact expected counts, success=true, zero failures, zero pending, and zero TODO tests; there are no suite retries. Existing tests intentionally exercise ingestion retry behavior, which is distinct from retrying a failing suite into a pass.
+
+The initial CI run passed both suites but Compose left its named one-off container behind. Cleanup was corrected to check that container's project label and explicitly remove it, then remove only the exact generated image tag. The leftover was removed, and subsequent full CI-container runs verified cleanup. Initial static checking found a missing lint-visible URL import; corrected before final static checks. These initial defects are recorded rather than treated as clean first-pass results. INT/TERM cleanup traps were added afterward and shell-checked; cancellation behavior was not independently injected.
+
+Final results: **136 unit tests passed (8 files), 22 integration passed (1 file), 10 browser passed (1 file): 168 passed, zero failed/skipped**. Six retained pipeline regressions prove exit 23 propagation and retained logs for intentionally failing fake commands; none intentionally fails the production workflow. Formatting, lint, strict typecheck, build, Bash syntax, Compose configuration/build, real container execution, and staged/unstaged diff checks passed. Integration JSON recorded total=22/passed=22/failed=0/pending=0/TODO=0; browser JSON recorded 10/10/0/0/0. The known pg busy-client deprecation warning remains.
+
+Final inventories restored all original 32 container, 14 volume, and 11 network identities. The owner API lifecycle timestamps and healthy state were unchanged; read-only before/after comparisons matched product/variant identities, current offers/last-change state, and complete history rows. No owner lifecycle command or database write was executed. Generated project images and disposable database state were removed; Docker build cache and local artifact files are retained for efficient review/reproduction. No production code, migration, production Compose/Dockerfile, dependency, or security policy was edited.
+
+**Local CI implementation validation: PASS. Hosted compatibility: NOT YET VERIFIED.** Local execution used Linux/arm64 under Colima, not GitHub's Ubuntu/amd64 kernel/AppArmor environment. The new hosted job will fail honestly if sandbox launch/evidence is unavailable. A successful owner-authorized hosted run is still required; this is not final project completion. After review, the owner must commit/push the approved changes and inspect the Development checks run for sandbox evidence and complete 136/22/10 test counts. No commit, push, hosted execution, or deployment was performed here.

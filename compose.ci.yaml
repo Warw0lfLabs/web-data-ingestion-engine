@@ -1,0 +1,39 @@
+services:
+  postgres:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_USER: ingestion
+      POSTGRES_PASSWORD: testing
+      POSTGRES_DB: ingestion_test
+    volumes: [test-data:/var/lib/postgresql/data]
+    networks: [tests]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U ingestion -d ingestion_test]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  tests:
+    build:
+      context: .
+      dockerfile: docker/ci-tests.Dockerfile
+    user: pwuser
+    environment:
+      TEST_DATABASE_URL: postgresql://ingestion:testing@postgres:5432/ingestion_test
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [tests]
+    init: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:${CI_SECCOMP_FILE:?CI_SECCOMP_FILE must name the generated CI profile}
+    shm_size: 256mb
+    mem_limit: 2g
+    pids_limit: 256
+networks:
+  tests:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+volumes:
+  test-data:

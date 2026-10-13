@@ -182,6 +182,14 @@ docker compose config --quiet
 docker compose build
 ```
 
+To reproduce the CI integration/browser environment with Docker (after `npm ci`), run:
+
+```sh
+bash scripts/ci-run.sh /tmp/ingestion-ci-test-logs
+```
+
+This creates a uniquely named disposable PostgreSQL/test project on an internal network with no published ports. The version-matched Playwright image is pinned by registry digest. Tests run as `pwuser`, with all outer capabilities dropped, no-new-privileges, private IPC/shared memory, and the CI-only seccomp profile. Sandbox checks require renderer user/PID/network namespaces and an additional seccomp filter for both launch paths. Missing evidence fails the run. JSON reports require all 22 integration and 10 browser cases to pass without skips. Logs/reports are copied to the chosen directory; the script removes its test containers, volume, network, and built image on ordinary success/failure. Forced termination such as SIGKILL can interrupt cleanup. Docker must support isolated internal bridge gateways and Linux process evidence. Host unit/static checks run separately.
+
 Install host Chromium with `npx playwright install chromium` before browser/integration tests. On Linux, use `npx playwright install --with-deps chromium` when system libraries are missing. OpenSSL CLI is required for the local TLS regression.
 
 To provide the disposable test database expected by the commands above (port 5544 must be free):
@@ -203,9 +211,9 @@ Integration tests require a dedicated disposable database whose name ends in `_t
 
 The automated demonstration covers initial ingestion, unchanged rerun, price changes, availability changes, return to an earlier state, transient retry, replay, page resumption, and browser fallback. Fixture state mutation exists only as an in-process test helper; there is no HTTP mutation endpoint.
 
-The suite contains **152 tests: 120 unit, 22 PostgreSQL/API integration, and 10 Playwright/browser**. Unit tests cover normalization, extraction, configuration, URL policy, and mocked operator-workflow success/failure handling without mutating Docker state. Integration tests use real PostgreSQL and Fastify, covering persistence/history, jobs, API behavior, retry/replay, and security/resource bounds. Browser tests exercise controlled rendering and browser-specific restrictions. The final guarded lifecycle workflow was exercised in disposable Compose with repeated restarts, persistence comparisons, preflight refusals, migration failure injection, and recovery. The owner subsequently reported a successful restart of the original local stack; that smoke test had no pre-restart data baseline. Earlier application integration/browser results remain recorded in the validation report.
+The suite contains **168 tests: 136 unit, 22 PostgreSQL/API integration, and 10 Playwright/browser**. Unit tests cover normalization, extraction, configuration, URL policy, and mocked operator-workflow success/failure handling without mutating Docker state. Integration tests use real PostgreSQL and Fastify, covering persistence/history, jobs, API behavior, retry/replay, and security/resource bounds. Browser tests exercise controlled rendering and browser-specific restrictions. The final guarded lifecycle workflow was exercised in disposable Compose with repeated restarts, persistence comparisons, preflight refusals, migration failure injection, and recovery. The owner subsequently reported a successful restart of the original local stack; that smoke test had no pre-restart data baseline. Earlier application integration/browser results remain recorded in the validation report.
 
-Local validation also exercised clean Compose startup, real HTTP ingestion, history changes/deduplication, retries, authorization, pagination, and restart persistence. The owner verified that GitHub-hosted `Development checks` run [38427214001](https://github.com/Warw0lfLabs/web-data-ingestion-engine/actions/runs/38427214001) succeeded on October 13, 2026; this predates the pending lifecycle changes and does not validate them. Counts and discovered/fixed defects are recorded in [manual testing](docs/manual-testing.md), [security review](docs/security-review.md), and [final validation](docs/validation.md), with each report preserving its stage-specific evidence.
+Local validation also exercised clean Compose startup, real HTTP ingestion, history changes/deduplication, retries, authorization, pagination, and restart persistence. GitHub reported successful workflow conclusions, but [run 38440125182](https://github.com/Warw0lfLabs/web-data-ingestion-engine/actions/runs/38440125182) was false-green: 120 unit tests passed, integration had 21 passed/1 failed, and browser had 3 passed/7 failed. Test pipelines now explicitly propagate failures. Integration/browser suites run in a digest-pinned, non-root Playwright CI container with fail-closed sandbox verification; a hosted rerun is still required. Earlier workflow conclusions alone do not establish that tests passed. Counts and discovered/fixed defects are recorded in [manual testing](docs/manual-testing.md), [security review](docs/security-review.md), and [final validation](docs/validation.md), with each report preserving its stage-specific evidence.
 
 ## V1 limits
 
@@ -213,4 +221,4 @@ One worker instance runs at most two jobs concurrently, with one active run per 
 
 Normalization supports USD/EUR/GBP, dot-decimal exact prices, and explicit availability mappings. Missing listings do not imply out of stock; stale current offers retain their last-observed timestamps. Broad locale handling, interactive variant selection, cross-source matching, retention jobs, and user accounts are deferred.
 
-API rate limits are single-process. Production ingress/TLS/deployment has not been validated; no hosted CI run for the pending lifecycle changes is recorded. A local pg warning about queued queries remains with installed pg 8 operation passing; future pg 9 compatibility is unverified. No frontend, Redis, ORM, arbitrary crawling, or bypass/evasion mechanisms are included.
+API rate limits are single-process. Production ingress/TLS/deployment has not been validated; the new sandboxed CI environment passed locally on Linux/arm64 but has not been validated on the hosted Ubuntu/amd64 runner. A local pg warning about queued queries remains with installed pg 8 operation passing; future pg 9 compatibility is unverified. No frontend, Redis, ORM, arbitrary crawling, or bypass/evasion mechanisms are included.

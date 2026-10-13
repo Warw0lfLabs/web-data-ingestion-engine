@@ -4,20 +4,10 @@ permissions:
   contents: read
 jobs:
   checks:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:17-bookworm
-        env:
-          POSTGRES_USER: ingestion
-          POSTGRES_PASSWORD: testing
-          POSTGRES_DB: ingestion_test
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U ingestion -d ingestion_test"
-          --health-interval 2s --health-timeout 3s --health-retries 20
-    env:
-      TEST_DATABASE_URL: postgresql://ingestion:testing@localhost:5432/ingestion_test
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -26,10 +16,11 @@ jobs:
       - run: npm run format:check
       - run: npm run lint
       - run: npm run typecheck
-      - run: npm test 2>&1 | tee unit-tests.log
-      - run: npx playwright install --with-deps chromium
-      - run: npm run test:integration 2>&1 | tee integration-tests.log
-      - run: npm run test:browser 2>&1 | tee browser-tests.log
+      - run: |
+          set -o pipefail
+          npm test 2>&1 | tee unit-tests.log
+      - name: Sandboxed integration and browser tests
+        run: bash scripts/ci-run.sh "$RUNNER_TEMP/ci-test-logs"
       - run: npm run build
       - run: docker compose config --quiet
       - run: docker compose build
@@ -37,5 +28,7 @@ jobs:
         if: failure()
         with:
           name: development-test-logs
-          path: "*-tests.log"
+          path: |
+            *-tests.log
+            ${{ runner.temp }}/ci-test-logs/
           retention-days: 7
