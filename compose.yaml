@@ -1,0 +1,132 @@
+services:
+  postgres:
+    build: { context: ., dockerfile: docker/postgres.Dockerfile }
+    environment:
+      POSTGRES_USER: ingestion
+      POSTGRES_PASSWORD: development
+      POSTGRES_DB: ingestion
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [data]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U ingestion -d ingestion]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+  migrate:
+    build: { context: ., target: api }
+    command: [node, dist/entrypoints/migrate.js]
+    environment:
+      DATABASE_URL: postgresql://ingestion:development@postgres:5432/ingestion
+      RUNTIME_DATABASE_ROLE: ingestion_runtime
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [data]
+  api:
+    build: { context: ., target: api }
+    ports: ["127.0.0.1:3000:3000"]
+    environment:
+      DATABASE_URL: postgresql://ingestion_runtime:development-runtime@postgres:5432/ingestion
+      FIXTURE_ORIGIN: http://fixture-server:8080
+      API_TOKEN: ${API_TOKEN:-development-only-change-me}
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    networks: [data, api-ingress]
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:3000/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+    mem_limit: 256m
+    cpus: 0.5
+    init: true
+  worker:
+    build: { context: ., target: worker }
+    environment:
+      DATABASE_URL: postgresql://ingestion_runtime:development-runtime@postgres:5432/ingestion
+      FIXTURE_ORIGIN: http://fixture-server:8080
+      BROWSER_ENDPOINT: ws://browser:3001
+      API_TOKEN: ${API_TOKEN:-development-only-change-me}
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      fixture-server: { condition: service_healthy }
+      browser: { condition: service_healthy }
+    networks: [data, extraction, browser-control]
+    healthcheck:
+      test: [CMD, node, /app/docker/worker-health.mjs]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    mem_limit: 512m
+    cpus: 1
+    init: true
+    stop_grace_period: 45s
+  fixture-server:
+    build: { context: ., target: fixtures }
+    environment: { FIXTURE_PORT: 8080 }
+    networks: [extraction, browser-fixtures]
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:8080/health/live').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+    mem_limit: 128m
+    cpus: 0.5
+    init: true
+  browser:
+    build: { context: ., dockerfile: docker/browser.Dockerfile }
+    user: pwuser
+    command: [node, /app/server.mjs]
+    networks: [browser-fixtures, browser-control]
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "const s=require('node:net').connect(3001,'127.0.0.1',()=>s.end());s.on('error',()=>process.exit(1))",
+        ]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+    shm_size: 256mb
+    mem_limit: 1g
+    cpus: 1
+    init: true
+    security_opt: ["seccomp:./docker/chromium-seccomp.json"]
+networks:
+  api-ingress: {}
+  browser-control:
+    {
+      internal: true,
+      driver_opts: { com.docker.network.bridge.gateway_mode_ipv4: isolated },
+    }
+  data:
+    {
+      internal: true,
+      driver_opts: { com.docker.network.bridge.gateway_mode_ipv4: isolated },
+    }
+  extraction:
+    {
+      internal: true,
+      driver_opts: { com.docker.network.bridge.gateway_mode_ipv4: isolated },
+    }
+  browser-fixtures:
+    {
+      internal: true,
+      driver_opts: { com.docker.network.bridge.gateway_mode_ipv4: isolated },
+    }
+volumes:
+  postgres-data:

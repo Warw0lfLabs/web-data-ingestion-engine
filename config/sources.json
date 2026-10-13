@@ -1,0 +1,137 @@
+[
+  {
+    "id": "structured",
+    "name": "structured demonstration",
+    "enabled": true,
+    "permission": "Owned deterministic local fixture; docs/source-policy.md",
+    "startUrls": ["http://fixture-server:8080/structured"],
+    "allowedOrigin": "http://fixture-server:8080",
+    "allowedPathPrefix": "/structured",
+    "networkPolicy": "fixture",
+    "cron": "0 */6 * * *",
+    "extraction": {
+      "jsonLd": true,
+      "itemSelector": ".product",
+      "fields": {
+        "id": {
+          "selector": ".product",
+          "attribute": "data-id"
+        },
+        "title": {
+          "selector": ".title"
+        },
+        "price": {
+          "selector": ".price"
+        },
+        "availability": {
+          "selector": ".stock"
+        }
+      },
+      "nextSelector": "a.next",
+      "browser": {
+        "enabled": false,
+        "readySelector": ".product"
+      }
+    },
+    "currency": "USD",
+    "limits": {
+      "maxPages": 20,
+      "maxItems": 500,
+      "intervalMs": 1000,
+      "httpTimeoutMs": 15000,
+      "maxBytes": 2097152,
+      "browserTimeoutMs": 30000,
+      "runTimeoutMs": 600000
+    }
+  },
+  {
+    "id": "dom",
+    "name": "dom demonstration",
+    "enabled": true,
+    "permission": "Owned deterministic local fixture; docs/source-policy.md",
+    "startUrls": ["http://fixture-server:8080/dom"],
+    "allowedOrigin": "http://fixture-server:8080",
+    "allowedPathPrefix": "/dom",
+    "networkPolicy": "fixture",
+    "cron": "0 */6 * * *",
+    "extraction": {
+      "jsonLd": true,
+      "itemSelector": ".product",
+      "fields": {
+        "id": {
+          "selector": ".product",
+          "attribute": "data-id"
+        },
+        "title": {
+          "selector": ".title"
+        },
+        "price": {
+          "selector": ".price"
+        },
+        "availability": {
+          "selector": ".stock"
+        }
+      },
+      "nextSelector": "a.next",
+      "browser": {
+        "enabled": false,
+        "readySelector": ".product"
+      }
+    },
+    "currency": "USD",
+    "limits": {
+      "maxPages": 20,
+      "maxItems": 500,
+      "intervalMs": 1000,
+      "httpTimeoutMs": 15000,
+      "maxBytes": 2097152,
+      "browserTimeoutMs": 30000,
+      "runTimeoutMs": 600000
+    }
+  },
+  {
+    "id": "javascript",
+    "name": "javascript demonstration",
+    "enabled": true,
+    "permission": "Owned deterministic local fixture; docs/source-policy.md",
+    "startUrls": ["http://fixture-server:8080/javascript"],
+    "allowedOrigin": "http://fixture-server:8080",
+    "allowedPathPrefix": "/javascript",
+    "networkPolicy": "fixture",
+    "cron": "0 */6 * * *",
+    "extraction": {
+      "jsonLd": true,
+      "itemSelector": ".product",
+      "fields": {
+        "id": {
+          "selector": ".product",
+          "attribute": "data-id"
+        },
+        "title": {
+          "selector": ".title"
+        },
+        "price": {
+          "selector": ".price"
+        },
+        "availability": {
+          "selector": ".stock"
+        }
+      },
+      "nextSelector": "a.next",
+      "browser": {
+        "enabled": true,
+        "readySelector": ".product"
+      }
+    },
+    "currency": "USD",
+    "limits": {
+      "maxPages": 20,
+      "maxItems": 500,
+      "intervalMs": 1000,
+      "httpTimeoutMs": 15000,
+      "maxBytes": 2097152,
+      "browserTimeoutMs": 30000,
+      "runTimeoutMs": 600000
+    }
+  }
+]

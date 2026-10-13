@@ -1,0 +1,54 @@
+{
+  "name": "web-data-ingestion-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.19"
+  },
+  "scripts": {
+    "dev:api": "tsx src/entrypoints/api.ts",
+    "dev:worker": "tsx src/entrypoints/worker.ts",
+    "fixtures": "tsx src/entrypoints/fixtures.ts",
+    "db:migrate": "tsx src/entrypoints/migrate.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:browser": "vitest run tests/browser"
+  },
+  "dependencies": {
+    "@fastify/rate-limit": "^11.2.0",
+    "@fastify/swagger": "^9.9.1",
+    "@fastify/swagger-ui": "^6.1.1",
+    "@sinclair/typebox": "^0.34.52",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "cheerio": "^1.2.0",
+    "cron-parser": "^5.10.1",
+    "fastify": "^5.12.5",
+    "graphile-worker": "^0.18.0",
+    "htmlparser2": "^10.1.0",
+    "ipaddr.js": "^2.5.0",
+    "node-pg-migrate": "^9.0.0",
+    "pg": "^8.23.1",
+    "pino": "^10.4.0",
+    "playwright": "^1.63.0",
+    "undici": "^8.11.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.6.4",
+    "@types/pg": "^8.23.1",
+    "eslint": "^10.12.0",
+    "prettier": "^3.9.9",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.71.1",
+    "vitest": "^5.0.3",
+    "yaml": "^2.9.1"
+  }
+}

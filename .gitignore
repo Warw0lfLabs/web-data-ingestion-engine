@@ -1,0 +1,28 @@
+node_modules/
+dist/
+coverage/
+.env
+playwright-report/
+test-results/
+
+# Local configuration and credentials
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+
+# Generated diagnostics and caches
+*.log
+*.pid
+*.tsbuildinfo
+.cache/
+
+# Local editor and operating-system metadata
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
