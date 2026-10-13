@@ -208,6 +208,7 @@ At the time of this run, response/log captures, disposable operator helpers, and
 
 ## Known limitations
 
+- Whole-stack `docker compose restart` can fail the one-shot migration service with a transient Docker DNS error; successful recovery does not fix the underlying restart behavior. See the owner-reported addendum below.
 - Only controlled fixture sources were manually exercised; no public scraping or adversarial security audit was performed.
 - Source price/availability changes and one-shot failures require an operator fixture override; there is intentionally no public mutation endpoint.
 - Health checks confirm service readiness/worker ownership, not progress of every background task.
@@ -215,3 +216,27 @@ At the time of this run, response/log captures, disposable operator helpers, and
 - Manual pagination covered run history at limit two; automated tests provide additional pagination coverage.
 - Infrastructure crash-lock recovery, worker termination mid-page, and long-duration operation were not manually tested in this stage.
 - This report does not establish production deployment or long-duration operation.
+
+## Owner-reported final smoke test: whole-stack restart
+
+This addendum records the owner's observations supplied on 13 October 2026. It is separate from the 6 October manual-testing run above. No additional runtime validation was performed for this documentation update; exact product UUIDs, timestamp values, and logs beyond the reported error were not supplied.
+
+The owner ran `docker compose restart`. All containers restarted, including the one-shot `migrate` service. Expected recovery was healthy long-running services and a successful migration exit. Instead, `migrate` exited with code 1:
+
+```text
+Error: getaddrinfo EAI_AGAIN postgres
+```
+
+This indicates a transient DNS resolution failure for the PostgreSQL service name during restart. The precise underlying timing cause remains undiagnosed. All long-running services eventually returned to healthy state despite the failed migration run.
+
+Persistence inspection confirmed that all three products retained their original UUIDs, product timestamps remained consistent, and price history remained intact without duplicate records. These are owner-reported checks; no additional row counts, hashes, or timestamp values are claimed.
+
+The owner then ran the recovery command:
+
+```sh
+docker compose up -d --wait
+```
+
+It completed successfully. The migration container exited with code 0, and all long-running services remained healthy. This successful recovery does not resolve the underlying whole-stack restart issue. For normal startup/recovery, follow the README's `up` commands and inspect `docker compose ps -a` for a successful one-shot migration exit as well as healthy long-running services. Preserve the PostgreSQL volume; deleting data is not part of this recovery procedure.
+
+Result: **restart limitation reproduced by the owner; recovery and persistence verification succeeded; underlying behavior remains unfixed.** The earlier successful `stop` / `start --wait` test is preserved above and is a different operation.

@@ -55,12 +55,17 @@ In Swagger, use `GET /v1/products`, copy a product ID into `GET /v1/products/{id
 
 Trigger `dom` or `javascript` through the same endpoint. Price changes, availability changes, transient errors, and unchanged reruns are exercised with in-process fixture helpers in tests and recorded operator workflows; there is no public fixture-mutation endpoint.
 
-Stop/restart while preserving PostgreSQL data:
+For normal startup, use `docker compose up --build -d --wait` as above. To stop and bring the stack back up while preserving PostgreSQL data, use:
 
 ```sh
 docker compose stop
-docker compose start --wait
+docker compose up -d --wait
+docker compose ps -a
 ```
+
+Avoid a whole-stack `docker compose restart`: it also restarts the one-shot `migrate` service. During the owner-reported final smoke test, that service exited with code 1 and `Error: getaddrinfo EAI_AGAIN postgres`, indicating a transient failure to resolve the PostgreSQL service name during restart. All long-running services eventually became healthy, but that did not mean the migration run had succeeded. The precise cause of the DNS timing failure has not been established.
+
+Recovery in that test succeeded with `docker compose up -d --wait`: `migrate` exited with code 0 and all long-running services remained healthy. Check `docker compose ps -a` for both outcomes. Compose's startup dependencies require PostgreSQL health before migrations and successful migration completion before API/worker startup. This is the recommended startup/recovery path; the observed recovery is **not a permanent fix** for whole-stack restart behavior. The earlier tested `stop` / `start --wait` sequence remains historical evidence, not evidence that `restart` is safe. See the [restart smoke-test addendum](docs/manual-testing.md#owner-reported-final-smoke-test-whole-stack-restart).
 
 `docker compose down` removes the stack but retains its named database volume. To discard disposable application data:
 

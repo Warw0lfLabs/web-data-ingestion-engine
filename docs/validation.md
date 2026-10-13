@@ -4,6 +4,8 @@ This is the final-validation stage report. Later documentation finalization reor
 
 Status: **PASSED**, 2026-10-06. This validates V1 after implementation, manual testing, and security review. GitHub-hosted CI and production deployment were not exercised.
 
+Later owner-reported smoke testing identified an unresolved whole-stack Compose restart limitation. The historical results below remain unchanged; see the addendum for the reported failure and successful recovery.
+
 ## Environment and isolation
 
 macOS ARM64 with Colima; host Node.js 22.23.2, Docker 29.5.2, Compose 5.5.1, OpenSSL 3.6.4. Application containers use Node.js 24; PostgreSQL reported 17.11. Chromium was installed through the locked Playwright dependency.
@@ -102,9 +104,33 @@ Git status showed the project files untracked, so a tracked diff cannot represen
 
 ## Remaining limitations
 
+- Whole-stack `docker compose restart` can restart the one-shot migration service into a transient DNS failure. Recovery with `docker compose up -d --wait` succeeded in the owner's smoke test, but the underlying behavior has not been fixed.
 - No remote GitHub CI evidence or actual fresh Git clone; all project files remain untracked.
 - Future pg 9 compatibility warning remains; installed pg 8 operation passed.
 - Historical-volume upgrade and host-only deployment path were reviewed rather than independently recreated.
 - This stage does not establish production TLS, image-CVE assessment, full IPv6 coverage, or support for arbitrary public browser workloads. Existing source-policy/V1 restrictions remain.
 
 Final validation passed for the tested V1 scope, subject to the limitations above.
+
+## Owner-reported restart limitation and recovery
+
+Reported on 13 October 2026 during the final manual smoke test: `docker compose restart` restarted all containers, including `migrate`, which exited with code 1 and `Error: getaddrinfo EAI_AGAIN postgres`. The error indicates transient resolution failure for the PostgreSQL service name during restart; its precise cause has not been established. All long-running services eventually became healthy, but the migration run had failed.
+
+The owner verified persistence: all three products retained their original UUIDs, product timestamps remained consistent, and price history stayed intact without duplicate records. A subsequent `docker compose up -d --wait` completed successfully, with `migrate` exiting 0 and all long-running services remaining healthy.
+
+This is a documented recovery result, **not a permanent fix**. The one-shot migration service and existing startup dependency design are unchanged. Normal startup/recovery should use the README's `up` commands, checking migration exit status separately from long-running service health. The earlier successful `stop` / `start --wait` validation did not exercise whole-stack `restart`.
+
+These observations come from the owner, not a new execution during this documentation update. No automated tests or runtime scenarios were rerun, and the historical total of 65 passing tests is not additional evidence for restart safety. See the [manual-testing addendum](manual-testing.md#owner-reported-final-smoke-test-whole-stack-restart) for the reported sequence and evidence limits.
+
+## Publication and GitHub CI addendum — 13 October 2026
+
+The owner supplied the following verified publication facts:
+
+- Public repository: [Warw0lfLabs/web-data-ingestion-engine](https://github.com/Warw0lfLabs/web-data-ingestion-engine).
+- Initial commit: `9695309f0c61424dbf7957e791c78623ded0aed1`; GitHub verified its signature (`verified: true`, `reason: valid`).
+- GitHub Actions workflow **Development checks**, run [38427214001](https://github.com/Warw0lfLabs/web-data-ingestion-engine/actions/runs/38427214001), concluded **success**.
+- Local `main` was synchronized with `origin/main`, and the working tree was clean before the current documentation edits.
+
+The October 6 statements about untracked files and the absence of GitHub-hosted CI execution describe the historical validation environment. They are preserved as evidence of that run; the project was subsequently published and GitHub-hosted CI passed as recorded above.
+
+This addendum records the owner's verified facts, not a new CI execution or additional runtime validation performed during this documentation update. It does not establish production readiness. The Docker Compose whole-stack restart limitation documented above remains unresolved; successful recovery and CI do not constitute a fix for that behavior.
