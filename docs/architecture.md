@@ -1,63 +1,66 @@
 # Architecture
 
-## Processes and module boundaries
+The application is a modular monolith with separate API and worker entry points. They share validated source configuration and PostgreSQL. Graphile Worker stores durable jobs in PostgreSQL, avoiding a second datastore or message broker.
 
-V1 is a modular monolith: API and worker have separate entry points but share TypeScript modules, configuration, and PostgreSQL. Keeping the queue in PostgreSQL avoids a second datastore while retaining durable background work.
+```mermaid
+flowchart LR
+  Client[Operator / API client] --> API[Fastify API]
+  API --> DB[(PostgreSQL catalog and job queue)]
+  DB --> Worker[Graphile worker and UTC scheduler]
+  Worker --> HTTP[Controlled HTTP client]
+  HTTP --> Fixtures[Owned fixture server]
+  Worker --> Extract[JSON-LD / DOM extraction]
+  Worker --> Browser[Isolated Playwright server]
+  Browser --> Fixtures
+  Worker --> Normalize[Normalization and validation]
+  Normalize --> Persist[Transactional page persistence]
+  Persist --> DB
+```
 
-| Process                       | Responsibility                                                            |
-| ----------------------------- | ------------------------------------------------------------------------- |
-| `src/entrypoints/api.ts`      | Fastify REST API, Swagger, trigger authorization, catalog/run reads       |
-| `src/entrypoints/worker.ts`   | Graphile execution, UTC scheduler, ingestion runner, single-instance lock |
-| `src/entrypoints/migrate.ts`  | Application/Graphile migrations and runtime-role grants                   |
-| `src/entrypoints/fixtures.ts` | Owned deterministic HTML/JavaScript demonstration pages                   |
-| Separate Playwright server    | Sandboxed Chromium for explicitly enabled fixture rendering               |
+The diagram shows process responsibilities and data flow. Browser network membership is narrower than worker membership; it does not have a direct database/API connection.
 
-`config` validates operator input. `jobs` owns run creation/scheduling; `ingestion` coordinates attempts/pages. `network` owns fetch policy and pacing; `extraction` yields candidates; `normalization` validates offers; `catalog` owns transactional persistence. `api` reads persisted state and queues work; it does not scrape inside HTTP handlers. `shared` contains database, logging, and error utilities.
+## Components
 
-## Boundaries and flow
+| Location                                       | Responsibility                                                |
+| ---------------------------------------------- | ------------------------------------------------------------- |
+| `src/entrypoints/`                             | API, worker, migrator, and fixture processes                  |
+| `src/config/` and `config/sources.json`        | Environment and trusted source validation                     |
+| `src/modules/api/`                             | REST reads, bearer-protected triggers, Swagger, pagination    |
+| `src/modules/jobs/`                            | Atomic run/job creation and UTC scheduling                    |
+| `src/modules/ingestion/`                       | Attempt lifecycle, extraction coordination, page resumption   |
+| `src/modules/network/`                         | URL/DNS policy, pinned connections, pacing, bounded downloads |
+| `src/modules/extraction/` and `normalization/` | Candidate extraction, bounded HTML, normalized offers         |
+| `src/modules/catalog/`                         | Catalog upserts, current offers, change history               |
+| `src/shared/`                                  | Database transactions, runtime grants, logging, errors        |
 
-Both API and worker startup initialize the trusted source registry, so API triggers can queue before worker startup. The API enforces bounded in-memory per-IP request/trigger rates, validates requests and uses SQL for catalog/run queries. Manual triggers create a run and enqueue Graphile work in one PostgreSQL transaction. The worker schedules UTC occurrences and executes ingestion. Source configuration is developer-controlled JSON validated with TypeBox/Ajv; each run carries the exact configuration snapshot/hash.
-
-Extraction follows controlled HTTP → JSON-LD → DOM fallback → optional fixture-only browser rendering → normalization → persistence. JSON-LD fields take precedence; invalid/missing fields can use matching DOM candidates. Identity joins use source listing IDs, never array position. Products are source-specific, with a default variant or source-provided JSON-LD offer SKU. Only exact offer prices are supported, not aggregate ranges.
+Both API and worker initialize the source registry at startup, so a ready API can queue a run before the worker starts. The API never fetches a client-supplied URL. Each run saves its source configuration snapshot/hash for reproducibility.
 
 ## Ingestion lifecycle
 
-1. A valid manual trigger or UTC schedule occurrence creates a run and Graphile job atomically, recording the configuration snapshot/hash. A unique active-source constraint prevents overlap.
-2. Graphile executes the queued attempt. The runner establishes its deadline and loads completed page results for resumption.
-3. Each configured page is fetched through the controlled HTTP client. JSON-LD candidates take precedence and matching DOM candidates supply missing/invalid fields. If no valid offers remain or candidates were rejected, and fixture browser extraction is enabled, Playwright renders the page and the rendered HTML goes through extraction/normalization again.
-4. A page transaction persists valid offers and its result. Validated next links are followed within page/item/deadline limits; repeated URLs are bounded.
-5. Expected transient failures persist attempt error/backoff state and enqueue a future attempt. Terminal state is `succeeded`, `partial`, or `failed`; partial means useful work committed despite rejected/incomplete data. Run, attempt, and page summaries are available through the API.
+1. A manual trigger or scheduled occurrence creates a run and Graphile job in one transaction. Source-row locking and an active-source unique index prevent overlap; optional idempotency keys reuse previous manual runs.
+2. The worker starts an attempt, uses the deadline saved when the run was created, and loads completed page results. Previously committed pages are skipped; saved next links allow resumption.
+3. Controlled HTTP fetch validates origin/path, DNS destinations, redirects, bytes, and time. JSON-LD has precedence; matching DOM candidates can supply missing or invalid fields. Identity matching uses listing keys, not array positions. Offers may carry a JSON-LD SKU variant or use a default variant; aggregate price ranges are unsupported.
+4. If static extraction yields no valid offers or rejected candidates, explicitly enabled fixture-only Playwright rendering is attempted. Rendered HTML passes through extraction and normalization again. HTTP denial and policy errors end the attempt; they do not activate browser fallback.
+5. A page transaction persists valid offers and its result. Validated pagination stays within page/item/deadline bounds. Terminal status is `succeeded`, `partial`, or `failed`; partial means useful work was committed despite rejected or incomplete data.
 
-HTTP denial or policy violations do not activate browser fallback. Browser rendering is an extraction capability for owned JavaScript fixtures, not an access workaround.
+## Catalog and history
 
-## Persistence
+Application tables separate sources, runs, attempts, and page results from products, variants, current offers, and append-only offer history. Graphile owns its queue schema. Product detail exposes variant offers; history is queried separately.
 
-The schema separates `sources`, `ingestion_runs`, `ingestion_attempts`, and `ingestion_page_results` from `products`, `variants`, `offer_current`, and append-only `offer_history`. Graphile owns its queue schema. API detail reads expose current variant offers and history separately.
+Products/variants have source-specific stable keys and unique constraints. Prices use `numeric(20,6)` and decimal strings at the API boundary. Each page transaction locks the run, upserts records, compares current price/currency/availability, appends history only when that tuple differs, updates observation timestamps, and commits page counters/results. Returning to an earlier tuple is a new change. Replaying a completed page is a no-op.
 
-Products and variants use source keys with unique constraints. Money uses numeric(20,6), serialized as strings. A page transaction locks its run, upserts catalog records, compares current offer state, inserts initial/change history, updates freshness, and commits the page result/counters. Each SQL write receives a timeout capped by the remaining run budget; an expired page rolls back. Replayed pages are no-ops. Equal price/currency/availability tuples do not create history; returning to an earlier tuple does.
+Each persistence statement receives a timeout capped by the remaining run budget and 15 seconds. An expired page rolls back; earlier committed pages remain available. Invalid records do not erase previous state, and missing listings do not imply out of stock. Staleness is visible through observation timestamps. Run detail uses a read-only repeatable-read transaction to keep attempts/pages consistent during worker transitions.
 
-Invalid records are rejected without erasing prior state. Availability must be explicitly recognized. Missing listings do not imply out of stock. Current state can remain stale after failures; its observation timestamp remains visible.
+## Jobs and recovery
 
-## Durable jobs
+One worker instance holds an advisory lock and runs at global concurrency two. Per-source Graphile queues serialize source work; the worker shares one BrowserExtractor instance with one extraction slot. Expected transient errors persist attempt/backoff state and enqueue a future job, using exponential jitter and Retry-After rather than sleeping in the worker. The expected-error retry path permits up to four ingestion attempts, subject to the deadline. Each queued ingestion task has Graphile `max_attempts=3` for infrastructure failures. Configured run budgets cannot exceed ten minutes; these are separate bounds, not a guarantee of exactly four executions under infrastructure failure.
 
-Graphile uses per-source named queues and global concurrency two. A database partial unique index prevents active source overlap. Manual idempotency keys and schedule occurrence uniqueness prevent duplicate enqueue. The worker holds a PostgreSQL advisory lock to enforce one V1 instance.
+The scheduler ticks once per minute and uses the latest UTC occurrence, with at most one catch-up occurrence per source after downtime. Scheduled-occurrence uniqueness prevents duplicate enqueue. Deadline reconciliation finalizes exhausted/stale work. Graphile crash-lock recovery can outlast normal retries; immediate recovery is not promised. Graceful worker shutdown releases its advisory lock and database resources.
 
-Expected transient failures schedule a new durable attempt with exponential jitter and Retry-After handling; workers do not sleep during backoff. There are at most four expected attempts and a ten-minute run deadline. Graphile permits three infrastructure attempts per queued task. Unexpected exhausted infrastructure work is finalized by deadline reconciliation on the scheduler tick. Graphile crash-lock recovery can take longer than normal retry delays; V1 does not promise immediate crash recovery.
+## Browser and operational boundaries
 
-Page resumption follows saved pagination links and skips completed pages. Terminal statuses are succeeded, partial, or failed. Nonretryable failures stop the run; previously committed pages remain visible. Scheduling uses the latest UTC occurrence and queues at most one catch-up occurrence per source after downtime. The scheduler ticks once per minute.
+Browser GET resources are intercepted and fulfilled through the controlled HTTP client, with allowed methods/types, request count, cumulative bytes, and a shared time budget. Fresh contexts block service workers, WebSockets, popups, and download acceptance. HTML/JSON-LD parsing and normalized strings are bounded before persistence.
 
-## Network and browser
+Compose puts the sandboxed Playwright server on fixture/control networks, separate from API/database networks. Internal bridges remove host gateways in the tested IPv4 configuration. Native browser traffic is not fully governed by interception; network isolation is an additional boundary. Host-launched browsers do not inherit it. See [security](security.md).
 
-HTTP permits configured origins and path boundaries, validates DNS answers, pins the selected address into the actual connection, and validates each redirect independently. Private/reserved addresses are forbidden for public-policy sources. Fixture policy is restricted to explicit local fixture hosts. Requests use identity encoding; unexpected compression is rejected rather than decompressed. Response bytes, time, pages, candidates, strings, and JSON-LD traversal are bounded. Text must be valid UTF-8; unsupported charsets are rejected. A streaming tokenizer limits HTML depth, nodes/events and attributes before DOM construction. Product/variant identity merging uses serialized tuples, and malformed Unicode/NUL values are rejected.
-
-Browser requests are intercepted and fulfilled from the same controlled HTTP client. Request methods/types, count, total downloaded bytes, origin/path, and time are bounded. Service workers, WebSockets, popups, and downloads are blocked. Local launch uses the Chromium sandbox; Compose runs a separate sandboxed Playwright server on a fixture network plus a dedicated internal control network shared with the worker. The API has a separate ingress network so its localhost port remains publishable. Internal bridges use isolated gateway mode; actual native WebRTC and direct container probes are recorded in the security review. The browser cannot reach the API/database network in the tested Compose environment. This is a practical V1 boundary, not a claim that arbitrary untrusted public browser workloads are supported.
-
-## Operations
-
-Pino logs use stable error codes and run/source/attempt identifiers without raw HTML or configuration snapshots. Run, attempt, and bounded page summaries persist in PostgreSQL. API readiness checks application and queue schemas. Compose health checks probe API readiness, fixture liveness, the browser listener, PostgreSQL readiness, and the worker advisory lock. The worker health probe is an ownership/startup check, not a task-progress monitor. Run detail reads use one read-only repeatable-read transaction to keep run, attempt, and page summaries consistent during transitions. API readiness is independent of worker availability. PostgreSQL bootstrap is packaged into its image; the one-shot migration process uses the owner role and grants operational access to a separate non-superuser API/worker role, including Graphile service-role RLS policies. There is no monitoring platform or dashboard.
-
-## Initial limitations
-
-Normalization supports USD/EUR/GBP with dot-decimal prices and explicit availability mappings. Selector configuration supports basic fields; DOM variant interaction, locale-general price parsing, and broad JSON-LD semantics are deferred. No automatic missing-listing deletions, data retention job, migrations rollback CI, public-source permission automation, or user accounts are included. Public HTTP policy exists and is covered through local controlled security tests; no public source is bundled.
-
-Manual testing and security review are recorded as stage-specific evidence. See [final validation](validation.md) for current checks and limitations; these reports preserve their historical evidence and tested scope.
+Migrations use the database owner; API/worker use a separate non-superuser operational role. Pino logs omit raw HTML/configuration and redact sensitive fields. Health checks cover process/database/schema readiness, fixture liveness, browser listener, and worker advisory-lock ownership; they do not measure job progress. [Operations](operations.md) describes startup gates, restart, and recovery. [Source policy](source-policy.md) defines supported sources; detailed tests remain in the [verification archive](verification/README.md).

@@ -374,97 +374,81 @@ The owner reported independently executing `scripts/stack-restart.sh` against th
 
 ## Final owner acceptance checklist — PENDING
 
-This is a procedure for the owner, **not an executed test report**. Every action and result below is **PENDING**. Earlier agent workflows and the owner's original-stack restart do not satisfy this final clean-state acceptance step. The walkthrough and its owner acknowledgment are also **PENDING**.
+The independent owner smoke test below was performed on 13 October 2026. This section now records **owner-supplied execution evidence**, not new commands executed during this documentation update. The heading retains PENDING because the architecture/operation walkthrough, owner acknowledgment, and final acceptance decision remain **PENDING**. The overall Definition of Done is not complete.
 
-### Clean checkout and isolation — PENDING
+### Tested checkout and isolation
 
-Use a new checkout at application/CI baseline commit `0a1b314afda8643418987a16f4035112be2e79e2`; record the actual full commit. Read README and this checklist before starting. That baseline predates this reconciliation; record the documentation revision used separately. A later documentation-only commit may instead be selected explicitly, recording both revisions.
+The owner used a separate clean checkout, `~/Projects/ingestion-owner-acceptance`, branch `main`, commit `e59964b21b77312c3fa6c6d22bd0172d05f8287b`, with a clean Git working tree before documentation changes. The application/CI baseline is `0a1b314afda8643418987a16f4035112be2e79e2`.
 
-Run in Bash in a fresh directory. The following are proposed commands, not commands executed for this checklist:
+Disposable project `ingestion-owner-1791916200-64733` used a dynamically allocated loopback API port, five project-specific networks, and a project-specific PostgreSQL volume. Initial inventories contained no resources belonging to this project. Lifecycle commands targeted this isolated project, not the original application project.
 
-```sh
-git clone https://github.com/Warw0lfLabs/web-data-ingestion-engine.git ingestion-owner-acceptance
-cd ingestion-owner-acceptance
-git checkout --detach 0a1b314afda8643418987a16f4035112be2e79e2
-git rev-parse HEAD
-npm ci
-cp .env.example .env
+### Observed startup and ingestion
 
-# Inspect existing resources and published ports before any Docker mutation.
-docker context show
-docker compose ls --format json
-docker ps -a --format '{{json .}}'
-docker network ls --format '{{json .}}'
-docker volume ls --format '{{json .}}'
+Startup completed with five healthy long-running services and migrator exit 0. PostgreSQL migration `001_initial` was verified. `/health/live`, `/health/ready`, and `/docs/json` returned HTTP 200; the owner opened Swagger UI successfully. `/v1/sources` returned `structured`, `dom`, and `javascript`.
 
-# Sanitize inherited Compose target controls in this test shell.
-for key in ${!COMPOSE_@}; do unset "$key"; done
-unset INGESTION_STACK_ALLOW_ALTERNATE_TARGET
-OWNER_PROJECT="ingestion-owner-$(date +%s)-$$"
-OWNER_ROOT=$(pwd -P)
-OWNER_EVIDENCE=$(mktemp -d)
-OWNER_OVERRIDE="$OWNER_EVIDENCE/isolated.yaml"
-cat > "$OWNER_OVERRIDE" <<'YAML'
+The scheduler had already populated the initial catalog. These manual runs observed unchanged data; they did not create the initial records. Intermediate queued/running states were not recorded as observed.
+
+| Source     | Manual run ID                          | Trigger                | Terminal result | Extractor | Accepted / rejected / changed |
+| ---------- | -------------------------------------- | ---------------------- | --------------- | --------- | ----------------------------- |
+| structured | `a7693a6c-6140-4e05-b7b9-da331247d015` | HTTP 202, reused=false | succeeded       | jsonld    | 1 / 0 / 0                     |
+| dom        | `a16e3213-a590-407c-88ed-52ce0c80e2e7` | HTTP 202, reused=false | succeeded       | dom       | 1 / 0 / 0                     |
+| javascript | `ed5149df-885f-4d53-8773-ae8e17903ea4` | HTTP 202, reused=false | succeeded       | browser   | 1 / 0 / 0                     |
+
+The catalog returned exactly three products. Each variant history endpoint returned exactly one original row, with IDs 1, 2, and 3 respectively:
+
+| Listing / source   | Product ID                             | Variant ID                             | Current offer       | History ID |
+| ------------------ | -------------------------------------- | -------------------------------------- | ------------------- | ---------- |
+| Book / structured  | `18abe940-89f1-45e0-b6e3-1fca309d0e97` | `e0d89b5b-e7ca-4c2b-b1ec-892d26ef5a51` | USD 19.99, in_stock | 1          |
+| Lamp / dom         | `5c2c2721-22ec-4409-bdda-ad90beb5369a` | `3616be73-8fb0-40f7-8ead-501ffd392bea` | USD 29.50, in_stock | 2          |
+| Chair / javascript | `0d244815-11d4-4ece-bf0a-b8507e683a49` | `da5e63ae-90d0-4c58-af49-e8fa39c74984` | USD 49.00, in_stock | 3          |
+
+The unchanged manual runs introduced no duplicate history rows. The separately requested additional unchanged structured rerun **after the history checks was not performed**; that procedural step remains PENDING, distinct from the successful unchanged manual runs above.
+
+### Restart, initial health failure, and recovery
+
+The owner captured the documented read-only catalog SQL snapshot before restart. SHA-256: `97e0830dce891e3df8d6d7c89299c80771cb083fb4ec42dfa5b3d4733a6edcad`. The supported `scripts/stack-restart.sh` succeeded for the disposable project, with migrator exit 0 and five healthy long-running services afterward.
+
+The post-restart snapshot had exactly the same SHA-256; byte comparison returned `PERSISTENCE: PASS — snapshots identical`. The snapshot covered product/variant identities, current offer state, and complete offer history, excluding mutable freshness timestamps (the selected current-offer last-change timestamp was included).
+
+**Initial post-restart health requests failed with HTTP 000.** The dynamic API port changed from 32771 to 32772. The owner resolved the new port using project-scoped `docker compose port api 3000`, updated the request destination, and both health endpoints then returned HTTP 200. Recovery is recorded separately from the initial failure. Future repetitions must rediscover the dynamic port after restart rather than reuse its previous value. Native `docker compose restart` remains unsupported and unfixed.
+
+### Log inspection and cleanup
+
+A bounded inspection of the last 200 log lines for api, worker, browser, and migrate found zero occurrences of `Unhandled`, `Unexpected ingestion failure`, `EAI_AGAIN`, `BROWSER_TIMEOUT`, `ECONNREFUSED`, `Error: `, `"level":50`, or `"level":60`. The tested token string was not found in that inspected output. This is a bounded operational observation, not a complete security audit.
+
+Before cleanup, the owner verified six project containers, five project networks, and one project-specific PostgreSQL volume. The owner explicitly approved and executed project-scoped `docker compose down --volumes`; all six containers, five networks, and the test volume were removed. Post-cleanup inventories for the disposable project were empty.
+
+The original `web-data-ingestion-engine` stack still showed five healthy long-running services and migrator exited 0; `web-data-ingestion-engine_postgres-data` still existed. No exact before/after original-resource identity comparison or original database-content equality is established by this evidence. Sanitized evidence files remain outside the repository in the owner's temporary evidence directory; none were copied or modified during this update.
+
+### Reproducible workflow reference
+
+These instructions summarize the tested workflow; the examples are **not a verbatim transcript of every owner command**. For a future repetition, use a clean checkout at an identified commit, read README, install with `npm ci`, and copy `.env.example` only in that fresh checkout. Inventory Docker projects, containers, networks, volumes, and ports before mutation. Sanitize inherited `COMPOSE_*` selectors, select a new unused project, and use distinct absolute Compose paths. Verify no external/shared volume or owner-data mount is selected.
+
+An isolated override replaces the API binding with a dynamically allocated loopback port:
+
+```yaml
 services:
   api:
     ports: !override ["127.0.0.1::3000"]
-YAML
+```
 
-docker ps -aq --filter "label=com.docker.compose.project=$OWNER_PROJECT"
-docker network ls -q --filter "label=com.docker.compose.project=$OWNER_PROJECT"
-docker volume ls -q --filter "label=com.docker.compose.project=$OWNER_PROJECT"
+In Bash, with `OWNER_ROOT`, `OWNER_PROJECT`, and `OWNER_OVERRIDE` set to the fresh checkout, unused project, and absolute override path:
+
+```sh
 owner_compose() {
   docker compose --project-directory "$OWNER_ROOT" -p "$OWNER_PROJECT" \
     -f "$OWNER_ROOT/compose.yaml" -f "$OWNER_OVERRIDE" "$@"
 }
 owner_compose config --quiet
-```
-
-**PENDING safety gate:** all three project inventories must succeed and be empty. Verify the override replaces the default API binding with a dynamically allocated loopback port, no external/shared volumes or bind mounts are selected, and the database volume belongs only to this new project. Review resolved configuration privately; it contains example credentials and must not be pasted into evidence. Stop on a collision, unsupported Compose syntax, or ambiguous isolation. Never use the default project or existing owner volumes for this test. Capture existing container IDs/state and volume identities for comparison afterward.
-
-### Startup and functional checks — PENDING
-
-```sh
 owner_compose up --build -d --wait
 owner_compose ps -a
 owner_compose logs --no-color migrate
 owner_compose port api 3000
-```
-
-**PENDING:** record the allocated loopback port as `OWNER_BASE=http://127.0.0.1:PORT` before requests. Expect five healthy long-running services and migrate exited 0. Inspect migration output and query `app_migrations` through this project's PostgreSQL service; expect `001_initial`.
-
-```sh
 owner_compose exec -T postgres psql -U ingestion -d ingestion \
   -c 'SELECT name FROM app_migrations ORDER BY id;'
-curl --fail-with-body -sS "$OWNER_BASE/health/live"
-curl --fail-with-body -sS "$OWNER_BASE/health/ready"
-curl --fail-with-body -sS "$OWNER_BASE/docs/json"
 ```
 
-**PENDING:** open `$OWNER_BASE/docs` in a browser and verify Swagger operations. Confirm the three configured sources through `/v1/sources` and individual source endpoints. Scheduled catch-up may already populate offers; record that separately from manual triggers.
-
-For each source, trigger with the token from this disposable checkout's `.env` without printing headers/token:
-
-```sh
-OWNER_BASE="$OWNER_BASE" node --env-file=.env --input-type=module <<'JS'
-for (const source of ['structured', 'dom', 'javascript']) {
-  const response = await fetch(`${process.env.OWNER_BASE}/v1/sources/${source}/runs`, {
-    method: 'POST',
-    headers: {'content-type': 'application/json', authorization: `Bearer ${process.env.API_TOKEN}`},
-    body: '{}',
-  });
-  console.log(source, response.status, await response.text());
-}
-JS
-```
-
-**PENDING:** expect 202 and save each run ID. If catch-up holds the source active, inspect/poll that real run first; a 409 is not a successful manual ingestion. Poll `/v1/runs/ID` until terminal using a bounded deadline (for example two minutes); do not assume completion from 202. Expect `succeeded`, accepted=1, and extractor `jsonld`, `dom`, or `browser` respectively. Record intermediate states actually observed; fast jobs need not expose every transition to polling.
-
-**PENDING:** inspect `/v1/products`, every product detail, returned variants/current offers, and `/v1/variants/ID/history`. Expect three demonstration products/variants and initial prices 19.99/29.50/49.00 USD, in stock. Save actual IDs and complete history responses without credentials. Trigger an unchanged structured run after its previous run finishes, poll it, and compare history IDs and every history row before/after. Expect changed=0 and identical history; observation timestamps may advance.
-
-### Supported restart and persistence — PENDING
-
-After all manual/catch-up runs finish, save a database baseline using the catalog snapshot SQL documented in the final guarded lifecycle section above. Include product/variant identities, current price/currency/availability/last-change state, and complete offer-history rows. Do not compare freshness fields as immutable: later scheduled observations can refresh them.
+Set the API base URL from the reported loopback port. Use README's token-safe trigger procedure for each source, poll actual run IDs to terminal state with a bounded deadline, and inspect products, variants/current offers, and complete histories. Capture before/after snapshots with the SQL in the final guarded lifecycle section above. Do not print authorization headers, tokens, or resolved credential-bearing configuration.
 
 ```sh
 COMPOSE_PROJECT_NAME="$OWNER_PROJECT" \
@@ -472,37 +456,30 @@ COMPOSE_FILE="$OWNER_ROOT/compose.yaml:$OWNER_OVERRIDE" \
 INGESTION_STACK_ALLOW_ALTERNATE_TARGET=1 \
 bash "$OWNER_ROOT/scripts/stack-restart.sh"
 owner_compose ps -a
-curl --fail-with-body -sS "$OWNER_BASE/health/ready"
+# Rediscover the port and update the API base URL before health requests.
+owner_compose port api 3000
 ```
 
-**PENDING:** record script exit status, five healthy services, and migrator exited 0. Re-query the same snapshot and compare all selected values/complete history against the saved baseline. Expect unchanged identities/current state/history and no duplicate entries. Inspect bounded service logs for unexpected crashes/errors and accidental token disclosure without copying secrets. Do not run native `docker compose restart`: it remains unsupported and unfixed.
+After explicitly verifying disposable ownership and approving cleanup, use `owner_compose down --volumes` only for that project. Check its container/network/volume label inventories are empty and inspect the original stack separately. Never use a default-project cleanup or global prune.
 
-### Disposable cleanup and acceptance record — PENDING
+### Owner acceptance record
 
-Verify the effective project and database volume ownership again before cleanup. The following removes only the named disposable project and its newly created volume; never substitute the default project or use a global prune:
+| Action                                       | Owner-supplied evidence / limitation                                                                         | Status                                  |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------- |
+| Clean checkout and identified revision       | main at e59964b21b77312c3fa6c6d22bd0172d05f8287b; clean working tree                                         | PASS                                    |
+| Isolated project, networks, volume and port  | No initial project resources; unique project and dynamic loopback binding                                    | PASS                                    |
+| Startup and migrations                       | Five healthy services, migrator exit 0, 001_initial verified                                                 | PASS                                    |
+| Health, Swagger and source list              | HTTP 200 on three endpoints; UI opened; three sources returned                                               | PASS                                    |
+| Three-source manual ingestion                | Three HTTP 202 responses and succeeded run/page results above                                                | PASS                                    |
+| Catalog/current offers/history               | Three products/variants; expected offers; one history row each                                               | PASS                                    |
+| Unchanged data and separate additional rerun | Manual unchanged runs had changed=0 and no duplicates; additional post-history structured rerun not executed | PARTIAL — additional rerun PENDING      |
+| Supported restart and persistence            | Script succeeded; before/after snapshot hash and bytes identical                                             | PASS                                    |
+| Post-restart health requests                 | Initial HTTP 000 on stale port; new port resolved, then both endpoints HTTP 200                              | PARTIAL — initial failure, recovered    |
+| Bounded logs                                 | No listed error markers or tested token in inspected output                                                  | PASS within inspected scope             |
+| Disposable cleanup                           | Owner-approved removal of six containers, five networks, one volume; empty project inventories               | PASS                                    |
+| Original application checks                  | Five healthy services, migrate exit 0, volume retained; exact resource/data equality not established         | PARTIAL — bounded post-cleanup evidence |
+| Architecture/operation walkthrough           | Not yet completed                                                                                            | PENDING                                 |
+| Owner acknowledgment of walkthrough          | Not yet supplied                                                                                             | PENDING                                 |
+| Final owner acceptance decision              | Not yet supplied                                                                                             | PENDING                                 |
 
-```sh
-owner_compose down --volumes
-docker ps -aq --filter "label=com.docker.compose.project=$OWNER_PROJECT"
-docker network ls -q --filter "label=com.docker.compose.project=$OWNER_PROJECT"
-docker volume ls -q --filter "label=com.docker.compose.project=$OWNER_PROJECT"
-```
-
-**PENDING:** all project queries must succeed and return empty. Compare original resource IDs/state/volume identities and confirm the owner's original application/data were not changed. Retain sanitized evidence outside the repository; do not publish `.env`, resolved configuration, or request headers. Shared build images/cache may remain; do not prune unrelated resources.
-
-| Owner action / expected outcome                          | Actual commands and evidence | Actual result |
-| -------------------------------------------------------- | ---------------------------- | ------------- |
-| Checkout, full commit and documentation revision         | PENDING                      | PENDING       |
-| Original inventory, isolated project/volume/port         | PENDING                      | PENDING       |
-| Startup, migrations, five healthy services               | PENDING                      | PENDING       |
-| Liveness/readiness, Swagger, source reads                | PENDING                      | PENDING       |
-| Three manual runs, polled completion/extractor evidence  | PENDING                      | PENDING       |
-| Catalog, variants, current offers and complete histories | PENDING                      | PENDING       |
-| Unchanged rerun; no duplicate history                    | PENDING                      | PENDING       |
-| Supported restart; matching before/after snapshots       | PENDING                      | PENDING       |
-| Log inspection and scoped cleanup                        | PENDING                      | PENDING       |
-| Original resources/data unaffected                       | PENDING                      | PENDING       |
-| Architecture/operation walkthrough and acknowledgment    | PENDING                      | PENDING       |
-| Owner acceptance: name, date, accepted commit, decision  | PENDING                      | PENDING       |
-
-Record unexpected failures and recovery separately; recovery does not erase an initial failure. Owner acceptance and the overall Definition of Done remain **PENDING** until actual evidence and explicit acknowledgment are supplied.
+**Smoke-test evidence recorded; final acceptance PENDING.** Do not infer an overall DoD pass from these results. The additional procedural rerun, walkthrough, owner acknowledgment, and final owner acceptance decision remain pending as identified above.
