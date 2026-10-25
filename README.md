@@ -108,7 +108,7 @@ The last command creates disposable PostgreSQL/test resources and verifies sandb
 
 Hosted [run 38444687594](https://github.com/Warw0lfLabs/web-data-ingestion-engine/actions/runs/38444687594) passed **136 unit, 22 integration, and 10 browser tests** at baseline `0a1b314afda8643418987a16f4035112be2e79e2`, including both Chromium sandbox paths on Ubuntu/amd64. These are baseline results, not a coverage percentage. An earlier false-green workflow was diagnosed and corrected with explicit failure propagation; its failures remain in the [evidence archive](docs/verification/README.md).
 
-Independent owner smoke testing exercised three-source ingestion and restart persistence. Final acceptance and the architecture walkthrough remain pending. See the [owner evidence and remaining steps](docs/testing.md#owner-evidence-and-acceptance); the overall Definition of Done is incomplete.
+Independent owner smoke testing exercised three-source ingestion and restart persistence; the additional post-history structured rerun passed. **Final owner acceptance: ACCEPT, 2026-10-25.** V1 Definition of Done is complete within the accepted portfolio demonstration scope, with documented limitations and owner waivers. The architecture/operations walkthrough and its delivery acknowledgment are **SKIPPED BY OWNER**, not completed. See the [owner evidence](docs/testing.md#owner-evidence-and-acceptance).
 
 ## Scope and documentation
 

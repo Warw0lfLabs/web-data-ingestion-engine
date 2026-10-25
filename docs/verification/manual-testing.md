@@ -372,9 +372,11 @@ The owner reported independently executing `scripts/stack-restart.sh` against th
 
 **Owner-reported smoke result: PASSED for startup/readiness and the observed post-restart state.** These are owner-provided results, not commands executed during this reconciliation. No pre-restart owner-data baseline was supplied, so exact identity, timestamp, offer/history preservation, or absence of newly introduced duplicates across this owner restart cannot be established from these counts. The isolated validation above did compare pre/post snapshots and remains separate evidence. Native `docker compose restart` remains unsupported and unfixed; the supported workflow is `scripts/stack-restart.sh`.
 
-## Final owner acceptance checklist — PENDING
+<a id="final-owner-acceptance-checklist--pending"></a>
 
-The independent owner smoke test below was performed on 13 October 2026. This section now records **owner-supplied execution evidence**, not new commands executed during this documentation update. The heading retains PENDING because the architecture/operation walkthrough, owner acknowledgment, and final acceptance decision remain **PENDING**. The overall Definition of Done is not complete.
+## Final owner acceptance checklist — ACCEPT
+
+The independent owner smoke test below was performed on 13 October 2026. This section now records **owner-supplied execution evidence**, not new commands executed during this documentation update. Final acceptance was explicitly recorded on 25 October 2026 below. The 25 October reconciliation below records the additional rerun and the owner’s walkthrough waiver; the walkthrough was not delivered or acknowledged. This records V1 demonstration and portfolio acceptance, not production deployment readiness.
 
 ### Tested checkout and isolation
 
@@ -402,7 +404,7 @@ The catalog returned exactly three products. Each variant history endpoint retur
 | Lamp / dom         | `5c2c2721-22ec-4409-bdda-ad90beb5369a` | `3616be73-8fb0-40f7-8ead-501ffd392bea` | USD 29.50, in_stock | 2          |
 | Chair / javascript | `0d244815-11d4-4ece-bf0a-b8507e683a49` | `da5e63ae-90d0-4c58-af49-e8fa39c74984` | USD 49.00, in_stock | 3          |
 
-The unchanged manual runs introduced no duplicate history rows. The separately requested additional unchanged structured rerun **after the history checks was not performed**; that procedural step remains PENDING, distinct from the successful unchanged manual runs above.
+The unchanged manual runs introduced no duplicate history rows. The separately requested additional unchanged structured rerun **after the history checks was not performed**; that procedural step was still pending on 13 October, distinct from the successful unchanged manual runs above. It was subsequently completed in the separate 25 October session below.
 
 ### Restart, initial health failure, and recovery
 
@@ -419,6 +421,18 @@ A bounded inspection of the last 200 log lines for api, worker, browser, and mig
 Before cleanup, the owner verified six project containers, five project networks, and one project-specific PostgreSQL volume. The owner explicitly approved and executed project-scoped `docker compose down --volumes`; all six containers, five networks, and the test volume were removed. Post-cleanup inventories for the disposable project were empty.
 
 The original `web-data-ingestion-engine` stack still showed five healthy long-running services and migrator exited 0; `web-data-ingestion-engine_postgres-data` still existed. No exact before/after original-resource identity comparison or original database-content equality is established by this evidence. Sanitized evidence files remain outside the repository in the owner's temporary evidence directory; none were copied or modified during this update.
+
+### Additional isolated owner rerun — 25 October 2026
+
+This later owner-supplied evidence is separate from the 13 October smoke test. Checkout revision was `e59964b21b77312c3fa6c6d22bd0172d05f8287b`; the disposable Compose project was `ingestion-owner-rerun-20261025`, using dynamically allocated loopback API port 32775. No Docker operation or test was executed during this documentation reconciliation.
+
+The manual POST to `/v1/sources/structured/runs` initially returned HTTP 400 because the required JSON body was omitted. The corrected request with body `{}` returned HTTP 202. Run `1c8126f5-8a72-40dd-9254-5fa0ab68c077` completed with status `succeeded`, trigger `manual`, attempt 1, accepted=1, rejected=0, changed=0, and error_code=null. Its page status was `succeeded` with extractor `jsonld`.
+
+For variant `63dbd928-380c-40a9-bb34-729ada0489da`, the history endpoint returned exactly the same single record before and after the rerun: ID 1, price `19.990000 USD`, availability `in_stock`, observed_at `2026-10-25T11:15:00.221Z`. No duplicate history entry was created. The supplied original history run ID could not be corroborated in existing repository documentation and is omitted rather than inferred. **Additional post-history unchanged structured rerun: PASS.**
+
+The owner explicitly authorized isolated cleanup. Six containers, five networks, and the project-specific PostgreSQL volume were removed. This session does not establish an independent before/after comparison of the original application's database.
+
+The owner explicitly waived the architecture/operations walkthrough: **SKIPPED BY OWNER**, not PASS. No walkthrough delivery or acknowledgment is claimed. Final acceptance was pending at this point in the session; the explicit decision below supersedes that status.
 
 ### Reproducible workflow reference
 
@@ -462,24 +476,42 @@ owner_compose port api 3000
 
 After explicitly verifying disposable ownership and approving cleanup, use `owner_compose down --volumes` only for that project. Check its container/network/volume label inventories are empty and inspect the original stack separately. Never use a default-project cleanup or global prune.
 
+### Final owner decision — 25 October 2026
+
+The project owner explicitly confirmed: “Final owner acceptance: ACCEPT for Web Data Ingestion Engine V1 with documented limitations.”
+
+- **Project:** Web Data Ingestion Engine
+- **Version:** V1
+- **Decision / final owner acceptance:** ACCEPT
+- **Decision date:** 2026-10-25
+- **Decision authority:** Project owner
+- **Canonical repository HEAD at acceptance:** `954f6b827ebee5bcdabace2e99856e6f9e15a9f4`
+- **Tested isolated checkout:** `e59964b21b77312c3fa6c6d22bd0172d05f8287b`
+- **Scope:** V1 demonstration and portfolio readiness, not production deployment
+- **Architecture/operations walkthrough:** SKIPPED BY OWNER
+- **Walkthrough acknowledgment:** SKIPPED BY OWNER
+- **Additional structured rerun:** PASS
+
+Acceptance includes the documented limitations. Native whole-stack `docker compose restart` remains unsupported; `scripts/stack-restart.sh` is the supported workflow. The initial post-restart HTTP 000 was recovered by rediscovering the dynamic API port. Exact original-application database equality was not independently established. Production readiness and unrestricted security assurance are not claimed; all other documented limitations remain in effect. This owner decision does not imply new tests or walkthrough delivery.
+
 ### Owner acceptance record
 
-| Action                                       | Owner-supplied evidence / limitation                                                                         | Status                                  |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------- |
-| Clean checkout and identified revision       | main at e59964b21b77312c3fa6c6d22bd0172d05f8287b; clean working tree                                         | PASS                                    |
-| Isolated project, networks, volume and port  | No initial project resources; unique project and dynamic loopback binding                                    | PASS                                    |
-| Startup and migrations                       | Five healthy services, migrator exit 0, 001_initial verified                                                 | PASS                                    |
-| Health, Swagger and source list              | HTTP 200 on three endpoints; UI opened; three sources returned                                               | PASS                                    |
-| Three-source manual ingestion                | Three HTTP 202 responses and succeeded run/page results above                                                | PASS                                    |
-| Catalog/current offers/history               | Three products/variants; expected offers; one history row each                                               | PASS                                    |
-| Unchanged data and separate additional rerun | Manual unchanged runs had changed=0 and no duplicates; additional post-history structured rerun not executed | PARTIAL — additional rerun PENDING      |
-| Supported restart and persistence            | Script succeeded; before/after snapshot hash and bytes identical                                             | PASS                                    |
-| Post-restart health requests                 | Initial HTTP 000 on stale port; new port resolved, then both endpoints HTTP 200                              | PARTIAL — initial failure, recovered    |
-| Bounded logs                                 | No listed error markers or tested token in inspected output                                                  | PASS within inspected scope             |
-| Disposable cleanup                           | Owner-approved removal of six containers, five networks, one volume; empty project inventories               | PASS                                    |
-| Original application checks                  | Five healthy services, migrate exit 0, volume retained; exact resource/data equality not established         | PARTIAL — bounded post-cleanup evidence |
-| Architecture/operation walkthrough           | Not yet completed                                                                                            | PENDING                                 |
-| Owner acknowledgment of walkthrough          | Not yet supplied                                                                                             | PENDING                                 |
-| Final owner acceptance decision              | Not yet supplied                                                                                             | PENDING                                 |
+| Action                                       | Owner-supplied evidence / limitation                                                                 | Status                                  |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| Clean checkout and identified revision       | main at e59964b21b77312c3fa6c6d22bd0172d05f8287b; clean working tree                                 | PASS                                    |
+| Isolated project, networks, volume and port  | No initial project resources; unique project and dynamic loopback binding                            | PASS                                    |
+| Startup and migrations                       | Five healthy services, migrator exit 0, 001_initial verified                                         | PASS                                    |
+| Health, Swagger and source list              | HTTP 200 on three endpoints; UI opened; three sources returned                                       | PASS                                    |
+| Three-source manual ingestion                | Three HTTP 202 responses and succeeded run/page results above                                        | PASS                                    |
+| Catalog/current offers/history               | Three products/variants; expected offers; one history row each                                       | PASS                                    |
+| Unchanged data and separate additional rerun | October 13 manual runs unchanged; October 25 before/after history remained one identical row         | PASS                                    |
+| Supported restart and persistence            | Script succeeded; before/after snapshot hash and bytes identical                                     | PASS                                    |
+| Post-restart health requests                 | Initial HTTP 000 on stale port; new port resolved, then both endpoints HTTP 200                      | PARTIAL — initial failure, recovered    |
+| Bounded logs                                 | No listed error markers or tested token in inspected output                                          | PASS within inspected scope             |
+| Disposable cleanup                           | Owner-approved removal of six containers, five networks, one volume; empty project inventories       | PASS                                    |
+| Original application checks                  | Five healthy services, migrate exit 0, volume retained; exact resource/data equality not established | PARTIAL — bounded post-cleanup evidence |
+| Architecture/operation walkthrough           | Explicitly waived by owner on 25 October; not delivered                                              | SKIPPED BY OWNER                        |
+| Owner acknowledgment of walkthrough          | Walkthrough waived; no delivery acknowledgment claimed                                               | SKIPPED BY OWNER                        |
+| Final owner acceptance decision              | Explicit project-owner decision, 2026-10-25, V1 with documented limitations                          | ACCEPT                                  |
 
-**Smoke-test evidence recorded; final acceptance PENDING.** Do not infer an overall DoD pass from these results. The additional procedural rerun, walkthrough, owner acknowledgment, and final owner acceptance decision remain pending as identified above.
+**Final owner acceptance: ACCEPT for V1 with documented limitations.** The additional structured rerun passed on 25 October. The walkthrough and its delivery acknowledgment are SKIPPED BY OWNER, not completed. No owner acceptance gate remains pending in this record; publication actions still require separate authorization.
